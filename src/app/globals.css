@@ -358,6 +358,25 @@ a {
   color: #f0a3a3;
 }
 
+.settings-password-section {
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-password-section h2 {
+  margin: 13px 0 7px;
+  color: #e6ebf2;
+  font-size: 17px;
+  font-weight: 450;
+  letter-spacing: -0.035em;
+}
+
+.settings-password-form {
+  max-width: 420px;
+  margin-top: 20px;
+}
+
 .eyebrow,
 .section-kicker,
 .sidebar-label {

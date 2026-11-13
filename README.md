@@ -66,7 +66,7 @@ npm.cmd run dev
 
 Abra `http://localhost:3000`. Os arquivos são enviados diretamente do navegador ao Storage privado do Supabase, com limite de 50 MB por arquivo. PDFs podem ser apresentados em tela cheia e paginados; PPTX é renderizado em modo apresentação; DOCX tem prévia somente de texto (não é um editor); XLSX tem prévia de até 500 linhas e 20 colunas por planilha; imagens são exibidas no visualizador integrado. DOCX e XLSX de até 20 MB podem ser pré-visualizados. Formatos antigos (`.ppt`, `.doc`, `.xls`) e OpenDocument não têm renderizador integrado e devem ser baixados ou convertidos para um dos formatos suportados. Recursos avançados de PowerPoint podem variar entre o visualizador web e o PowerPoint original.
 
-Depois do login, a aba **Configurações** permite salvar o nome usado na saudação de entrada e escolher uma cor de destaque personalizada. As preferências ficam na tabela privada `public.app_settings`, protegida por RLS.
+Depois do login, a aba **Configurações** permite salvar o nome usado na saudação de entrada, escolher uma cor de destaque personalizada e trocar a senha confirmando a senha atual. As preferências ficam na tabela privada `public.app_settings`, protegida por RLS.
 
 ## Banco e segurança
 

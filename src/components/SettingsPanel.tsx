@@ -1,9 +1,10 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Check, LoaderCircle, Palette, UserRound } from 'lucide-react';
-import { useState, useTransition } from 'react';
+import { Check, KeyRound, LoaderCircle, Palette, UserRound } from 'lucide-react';
+import { useRef, useState, useTransition } from 'react';
 import {
+  changePasswordAction,
   saveDashboardSettings,
   type DashboardSettings,
 } from '@/app/dashboard/settings-actions';
@@ -19,6 +20,10 @@ export function SettingsPanel({ initialSettings, onSaved }: SettingsPanelProps) 
   const [message, setMessage] = useState('');
   const [isError, setIsError] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [isPasswordError, setIsPasswordError] = useState(false);
+  const [isPasswordPending, startPasswordTransition] = useTransition();
+  const passwordForm = useRef<HTMLFormElement>(null);
 
   function saveSettings(formData: FormData) {
     setMessage('');
@@ -35,6 +40,22 @@ export function SettingsPanel({ initialSettings, onSaved }: SettingsPanelProps) 
       setDisplayName(result.settings.display_name);
       setAccentColor(result.settings.accent_color);
       onSaved(result.settings);
+    });
+  }
+
+  function changePassword(formData: FormData) {
+    setPasswordMessage('');
+    startPasswordTransition(async () => {
+      const result = await changePasswordAction(formData);
+      if (result.status === 'error') {
+        setIsPasswordError(true);
+        setPasswordMessage(result.message);
+        return;
+      }
+
+      setIsPasswordError(false);
+      setPasswordMessage('Senha alterada com sucesso.');
+      passwordForm.current?.reset();
     });
   }
 
@@ -89,6 +110,59 @@ export function SettingsPanel({ initialSettings, onSaved }: SettingsPanelProps) 
           </p>
         )}
       </form>
+
+      <section aria-labelledby="password-settings-title" className="settings-password-section">
+        <div className="section-kicker"><span className="section-kicker-line" /> SEGURANÇA DA CONTA</div>
+        <h2 id="password-settings-title">Alterar senha</h2>
+        <p className="settings-intro">Confirme sua senha atual para definir uma nova senha.</p>
+        <form action={changePassword} className="settings-form settings-password-form" ref={passwordForm}>
+          <label className="settings-field">
+            <span><KeyRound size={15} /> Senha atual</span>
+            <input
+              autoComplete="current-password"
+              maxLength={1024}
+              name="currentPassword"
+              required
+              type="password"
+            />
+          </label>
+          <label className="settings-field">
+            <span>Nova senha</span>
+            <input
+              autoComplete="new-password"
+              maxLength={128}
+              minLength={12}
+              name="newPassword"
+              required
+              type="password"
+            />
+            <small>Use pelo menos 12 caracteres.</small>
+          </label>
+          <label className="settings-field">
+            <span>Confirmar nova senha</span>
+            <input
+              autoComplete="new-password"
+              maxLength={128}
+              minLength={12}
+              name="confirmPassword"
+              required
+              type="password"
+            />
+          </label>
+          <button className="settings-save-button" disabled={isPasswordPending} type="submit">
+            {isPasswordPending ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}
+            {isPasswordPending ? 'Atualizando…' : 'Atualizar senha'}
+          </button>
+          {passwordMessage && (
+            <p
+              className={isPasswordError ? 'settings-message settings-message-error' : 'settings-message'}
+              role={isPasswordError ? 'alert' : 'status'}
+            >
+              {passwordMessage}
+            </p>
+          )}
+        </form>
+      </section>
     </motion.section>
   );
 }
