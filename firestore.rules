@@ -1,0 +1,106 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function profile(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function canViewProfile(uid) {
+      return isOwner(uid)
+        || (signedIn()
+          && profile(uid).profileType == 'student'
+          && request.auth.uid in profile(uid).teacherIds);
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid)
+        || (signedIn() && profile(uid).profileType == 'student'
+          && request.auth.uid in profile(uid).teacherIds);
+      allow create, update: if isOwner(uid);
+      allow delete: if false;
+    }
+
+    match /subjects/{subjectId} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /folders/{folderId} {
+      allow read: if signedIn()
+        && (resource.data.ownerId == request.auth.uid
+          || (request.auth.uid in resource.data.sharedWithAccountIds));
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /pages/{pageId} {
+      allow read: if signedIn()
+        && (resource.data.ownerId == request.auth.uid
+          || (resource.data.private == false
+            && request.auth.uid in resource.data.sharedWithAccountIds)
+          || (resource.data.private == false
+            && profile(resource.data.ownerId).sharePersonalPagesWithTeacher == true
+            && request.auth.uid in profile(resource.data.ownerId).teacherIds));
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /files/{fileId} {
+      allow read: if signedIn()
+        && (resource.data.ownerId == request.auth.uid
+          || (resource.data.sharedWithAccountIds != null
+            && request.auth.uid in resource.data.sharedWithAccountIds)
+          || (resource.data.subjectVisibleToTeacher == true
+            && request.auth.uid in profile(resource.data.ownerId).teacherIds));
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.fileSize is int
+        && request.resource.data.fileSize >= 0
+        && request.resource.data.fileSize <= 52428800;
+      allow update, delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /tasks/{taskId} {
+      allow read: if signedIn()
+        && (resource.data.teacherId == request.auth.uid
+          || request.auth.uid in resource.data.assigneeIds);
+      allow create, update, delete: if signedIn()
+        && request.resource.data.teacherId == request.auth.uid;
+    }
+
+    match /submissions/{submissionId} {
+      allow read: if signedIn()
+        && (resource.data.studentId == request.auth.uid
+          || resource.data.teacherId == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.studentId == request.auth.uid;
+      allow update: if signedIn()
+        && (resource.data.studentId == request.auth.uid
+          || resource.data.teacherId == request.auth.uid);
+      allow delete: if signedIn() && resource.data.studentId == request.auth.uid;
+    }
+
+    match /shares/{shareId} {
+      allow read: if signedIn()
+        && (resource.data.ownerId == request.auth.uid
+          || resource.data.active == true
+          || request.auth.uid in resource.data.accountIds);
+      allow create, update, delete: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

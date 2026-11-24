@@ -17,6 +17,7 @@
     "@e965/xlsx": "^0.20.3",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.119.0",
+    "firebase": "^12.6.0",
     "framer-motion": "14.13.0",
     "lucide-react": "1.72.0",
     "mammoth": "^1.13.0",
