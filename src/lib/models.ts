@@ -8,6 +8,7 @@ export type UserProfile = {
   grade: string | null;
   subjectIds: string[];
   teacherIds: string[];
+  studentIds: string[];
   sharePersonalPagesWithTeacher: boolean;
   storageUsedBytes: number;
 };

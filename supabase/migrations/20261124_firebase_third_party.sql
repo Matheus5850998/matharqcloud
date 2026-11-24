@@ -8,7 +8,10 @@ create policy "Firebase users read own private files"
   on storage.objects for select to authenticated
   using (
     bucket_id = 'personal-files'
-    and (storage.foldername(name))[1] = (select auth.jwt()->>'sub')
+    and (
+      (storage.foldername(name))[1] = (select auth.jwt()->>'sub')
+      or (storage.foldername(name))[2] = (select auth.jwt()->>'sub')
+    )
   );
 
 drop policy if exists "Firebase users upload own private files" on storage.objects;

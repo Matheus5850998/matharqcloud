@@ -29,6 +29,7 @@ export default function DashboardPage() {
   const [files, setFiles] = useState<FileMetadata[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [classFiles, setClassFiles] = useState<FileMetadata[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
@@ -46,7 +47,22 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return;
     getDoc(doc(db, 'users', user.uid)).then((snapshot) => {
-      if (snapshot.exists()) setProfile(snapshot.data() as UserProfile);
+      if (snapshot.exists()) {
+        const nextProfile = snapshot.data() as UserProfile;
+        setProfile(nextProfile);
+        if (nextProfile.profileType === 'teacher' && nextProfile.studentIds?.length) {
+          const linkedFilesQuery = query(
+            collection(db, 'files'),
+            where('ownerId', 'in', nextProfile.studentIds.slice(0, 10)),
+            orderBy('createdAt', 'desc'),
+          );
+          onSnapshot(linkedFilesQuery, (fileSnapshot) => {
+            setClassFiles(fileSnapshot.docs
+              .map((item) => ({ id: item.id, ...item.data() } as FileMetadata))
+              .filter((file) => file.subjectVisibleToTeacher));
+          });
+        }
+      }
     });
     setGeminiKey(getGeminiKey(user.uid));
     const filesQuery = query(
@@ -81,12 +97,12 @@ export default function DashboardPage() {
     [files],
   );
 
-  const visibleFiles = useMemo(
-    () => activeSubject
-      ? files.filter((file) => file.subjectId === activeSubject)
-      : files,
-    [activeSubject, files],
-  );
+  const visibleFiles = useMemo(() => {
+    const sourceFiles = profile?.profileType === 'teacher' ? classFiles : files;
+    return activeSubject
+      ? sourceFiles.filter((file) => file.subjectId === activeSubject)
+      : sourceFiles;
+  }, [activeSubject, classFiles, files, profile?.profileType]);
 
   const smartAlerts = useMemo(() => getLocalAlerts({
     storageUsedBytes: storageUsed,
@@ -170,7 +186,8 @@ export default function DashboardPage() {
         if (storageUsed + file.size > 1024 * 1024 * 1024) {
           throw new Error('O limite gratuito de 1 GB foi atingido.');
         }
-        const storagePath = `${user.uid}/root/${Date.now()}-${sanitizeName(file.name)}`;
+        const teacherId = profile?.teacherIds?.[0] || 'private';
+        const storagePath = `${user.uid}/${teacherId}/root/${Date.now()}-${sanitizeName(file.name)}`;
         const { error: uploadError } = await supabase.storage
           .from('personal-files')
           .upload(storagePath, file, { upsert: false, contentType: file.type });
@@ -184,7 +201,7 @@ export default function DashboardPage() {
           folderId: null,
           subjectId: activeSubject,
           pageId: null,
-          subjectVisibleToTeacher: profile?.sharePersonalPagesWithTeacher || false,
+          subjectVisibleToTeacher: Boolean(activeSubject),
           sharedWithAccountIds: [],
           createdAt: serverTimestamp(),
         });
