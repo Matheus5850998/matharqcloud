@@ -1,15 +1,15 @@
 'use client';
 
-import { addDoc, collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { motion } from 'framer-motion';
-import { BookOpen, Cloud, Copy, Files, Folder as FolderIcon, GraduationCap, Link2, LogOut, Plus, UploadCloud, Users } from 'lucide-react';
+import { BookOpen, Cloud, Copy, Files, Folder as FolderIcon, GraduationCap, Link2, LogOut, Plus, Trash2, UploadCloud, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useFirebaseAuth } from '@/lib/auth-context';
 import { getFirebase } from '@/lib/firebase';
 import { createFirebaseSupabaseClient } from '@/lib/supabase/firebase';
 import type { FileMetadata, Folder, Subject, Task, UserProfile } from '@/lib/models';
-import { getLocalAlerts, getLocalSuggestions, getGeminiKey, saveGeminiKey } from '@/lib/ai-service';
+import { getLocalAlerts } from '@/lib/ai-service';
 import { SharePanel } from '@/components/SharePanel';
 import dynamic from 'next/dynamic';
 
@@ -32,13 +32,17 @@ export default function DashboardPage() {
   const [classFiles, setClassFiles] = useState<FileMetadata[]>([]);
   const [linkedStudentIds, setLinkedStudentIds] = useState<string[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [teacherTasks, setTeacherTasks] = useState<Task[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [viewerFile, setViewerFile] = useState<FileMetadata | null>(null);
   const [teacherCode, setTeacherCode] = useState('');
-  const [geminiKey, setGeminiKey] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
+  const [taskFormOpen, setTaskFormOpen] = useState(false);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskDescription, setTaskDescription] = useState('');
+  const [taskDueAt, setTaskDueAt] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
@@ -52,7 +56,6 @@ export default function DashboardPage() {
     const stopProfile = onSnapshot(doc(db, 'users', user.uid), (snapshot) => {
       if (snapshot.exists()) {
         setProfile(snapshot.data() as UserProfile);
-        setGeminiKey(getGeminiKey(user.uid));
       }
     }, () => setError('Não foi possível carregar seu perfil.'));
     const stopLinks = onSnapshot(
@@ -126,7 +129,11 @@ export default function DashboardPage() {
     const tasksStop = onSnapshot(tasksQuery, (snapshot) => {
       setTasks(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Task)));
     });
-    return () => { subjectsStop(); foldersStop(); tasksStop(); };
+    const teacherTasksQuery = query(collection(db, 'tasks'), where('teacherId', '==', user.uid));
+    const teacherTasksStop = onSnapshot(teacherTasksQuery, (snapshot) => {
+      setTeacherTasks(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Task)));
+    });
+    return () => { subjectsStop(); foldersStop(); tasksStop(); teacherTasksStop(); };
   }, [db, user]);
 
   const storageUsed = useMemo(
@@ -135,7 +142,9 @@ export default function DashboardPage() {
   );
 
   const visibleFiles = useMemo(() => {
-    const sourceFiles = profile?.profileType === 'teacher' ? classFiles : files;
+    const sourceFiles = profile?.profileType === 'teacher'
+      ? [...files, ...classFiles]
+      : files;
     return sourceFiles.filter((file) =>
       (!activeSubject || file.subjectId === activeSubject)
       && (!activeFolder || file.folderId === activeFolder),
@@ -151,28 +160,26 @@ export default function DashboardPage() {
 
   async function createSubject() {
     if (!user) return;
-    const suggestion = getLocalSuggestions('Matéria')[subjects.length % 3];
-    const name = window.prompt('Nome da matéria', suggestion.name)?.trim();
+    const name = window.prompt('Nome da matéria', 'Nova matéria')?.trim();
     if (!name) return;
     await addDoc(collection(db, 'subjects'), {
       ownerId: user.uid,
       name,
-      icon: suggestion.icon,
-      color: suggestion.color,
+      icon: '📚',
+      color: '#6D9BFF',
       createdAt: serverTimestamp(),
     });
   }
 
   async function createFolder() {
     if (!user) return;
-    const suggestion = getLocalSuggestions('Pasta')[folders.length % 3];
-    const name = window.prompt('Nome da pasta', suggestion.name)?.trim();
+    const name = window.prompt('Nome da pasta', 'Nova pasta')?.trim();
     if (!name) return;
     await addDoc(collection(db, 'folders'), {
       ownerId: user.uid,
       name,
-      icon: suggestion.icon,
-      color: suggestion.color,
+      icon: '📁',
+      color: '#7A93AC',
       parentId: null,
       private: true,
       sharedWithAccountIds: [],
@@ -181,20 +188,53 @@ export default function DashboardPage() {
     });
   }
 
-  async function createTask() {
+  async function publishTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     if (!user) return;
-    const title = window.prompt('Título da tarefa');
-    if (!title?.trim()) return;
-    await addDoc(collection(db, 'tasks'), {
-      teacherId: user.uid,
-      title: title.trim(),
-      description: 'Material ou atividade disponível para a turma.',
-      grade: profile?.grade || 'Todas as séries',
-      assigneeIds: [],
-      kind: 'submission',
-      dueAt: null,
-      createdAt: serverTimestamp(),
-    });
+    if (linkedStudentIds.length === 0) {
+      setError('Vincule pelo menos um aluno antes de publicar uma atividade.');
+      setTaskFormOpen(false);
+      return;
+    }
+    try {
+      await addDoc(collection(db, 'tasks'), {
+        teacherId: user.uid,
+        title: taskTitle.trim(),
+        description: taskDescription.trim(),
+        grade: 'Alunos vinculados',
+        assigneeIds: linkedStudentIds,
+        kind: 'submission',
+        dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : null,
+        createdAt: serverTimestamp(),
+      });
+      setTaskTitle('');
+      setTaskDescription('');
+      setTaskDueAt('');
+      setTaskFormOpen(false);
+      setError('Atividade publicada para os alunos vinculados.');
+    } catch (taskError) {
+      setError(taskError instanceof Error ? taskError.message : 'Não foi possível publicar a atividade.');
+    }
+  }
+
+  async function deleteFolder(folder: Folder) {
+    if (!user) return;
+    try {
+      const [filesInFolder, childFolders] = await Promise.all([
+        getDocs(query(collection(db, 'files'), where('ownerId', '==', user.uid), where('folderId', '==', folder.id))),
+        getDocs(query(collection(db, 'folders'), where('ownerId', '==', user.uid), where('parentId', '==', folder.id))),
+      ]);
+      if (!filesInFolder.empty || !childFolders.empty) {
+        setError('A pasta contém itens. Mova ou remova os arquivos e subpastas antes de apagá-la.');
+        return;
+      }
+      if (!window.confirm(`Apagar a pasta “${folder.name}”?`)) return;
+      await deleteDoc(doc(db, 'folders', folder.id));
+      if (activeFolder === folder.id) setActiveFolder(null);
+      setError('Pasta apagada.');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Não foi possível apagar a pasta.');
+    }
   }
 
   async function linkTeacher() {
@@ -284,9 +324,12 @@ export default function DashboardPage() {
             <button onClick={createFolder} type="button" aria-label="Criar pasta"><Plus size={14} /></button>
           </div>
           {folders.map((folder) => (
-            <button key={folder.id} className={activeFolder === folder.id ? 'active' : ''} onClick={() => { setActiveFolder(folder.id); setActiveSubject(folder.subjectId); }} type="button">
-              <FolderIcon size={15} style={{ color: folder.color }} /> <span className="sidebar-item-name">{folder.name}</span>
-            </button>
+            <div className="sidebar-folder-row" key={folder.id}>
+              <button className={activeFolder === folder.id ? 'active' : ''} onClick={() => { setActiveFolder(folder.id); setActiveSubject(folder.subjectId); }} type="button">
+                <FolderIcon size={15} style={{ color: folder.color }} /> <span className="sidebar-item-name">{folder.name}</span>
+              </button>
+              <button className="sidebar-folder-delete" aria-label={`Apagar pasta ${folder.name}`} onClick={() => deleteFolder(folder)} type="button"><Trash2 size={13} /></button>
+            </div>
           ))}
           {profile?.profileType === 'student' && (
             <>
@@ -316,8 +359,14 @@ export default function DashboardPage() {
                 if (profile.teacherCode) void navigator.clipboard.writeText(profile.teacherCode);
               }} type="button"><Copy size={13} /> Copiar código</button>
             </div>
-            <button className="teacher-sidebar-action" onClick={createTask} type="button"><Plus size={15} /> Criar atividade</button>
+            <button className="teacher-sidebar-action" onClick={() => setTaskFormOpen(true)} type="button"><Plus size={15} /> Criar atividade</button>
             <button className="teacher-sidebar-action" disabled={!activeFolder} onClick={() => setShareOpen(true)} type="button"><Link2 size={15} /> Compartilhar pasta</button>
+            {teacherTasks.slice(0, 3).map((task) => (
+              <div className="sidebar-task-item" key={task.id}>
+                <strong>{task.title}</strong>
+                <span>{task.assigneeIds.length} aluno(s) · {task.dueAt ? new Date(task.dueAt).toLocaleDateString('pt-BR') : 'Sem prazo'}</span>
+              </div>
+            ))}
           </section>
         )}
         <div className="sidebar-account">
@@ -357,25 +406,22 @@ export default function DashboardPage() {
             <span className="school-profile-note">{profile.grade || 'Série não informada'} · {profile.teacherIds?.length || 0} professor(es) vinculado(s)</span>
           </div>
         )}
-        {profile && (
-          <div className="ai-tools">
-            <strong>Sugestões locais</strong>
-            {getLocalSuggestions(activeSubject ? 'Matéria' : 'Pasta').map((item) => (
-              <button key={item.name} type="button" onClick={async () => {
-                if (!user) return;
-                await addDoc(collection(db, activeSubject ? 'subjects' : 'folders'), activeSubject
-                  ? { ownerId: user.uid, name: item.name, icon: item.icon, color: item.color, createdAt: serverTimestamp() }
-                  : { ownerId: user.uid, name: item.name, icon: item.icon, color: item.color, parentId: null, private: true, sharedWithAccountIds: [], subjectId: activeSubject, createdAt: serverTimestamp() });
-              }}>{item.icon} {item.name}</button>
-            ))}
-            <label>Gemini BYOK
-              <input type="password" value={geminiKey} onChange={(event) => setGeminiKey(event.target.value)} placeholder="Sua chave gratuita" />
-            </label>
-            <button type="button" onClick={() => {
-              try { saveGeminiKey(user!.uid, geminiKey); setError('Chave Gemini salva apenas neste navegador.'); }
-              catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Não foi possível salvar a chave.'); }
-            }}>Salvar chave</button>
-          </div>
+        {profile?.profileType === 'student' && tasks.length > 0 && (
+          <section className="student-tasks">
+            <div className="library-heading">
+              <div><span className="eyebrow">DA SUA TURMA</span><h2>Atividades</h2></div>
+              <span>{tasks.length} recebida(s)</span>
+            </div>
+            <div className="task-grid">
+              {tasks.map((task) => (
+                <article key={task.id}>
+                  <strong>{task.title}</strong>
+                  <p>{task.description || 'Atividade enviada pelo professor.'}</p>
+                  <span>{task.dueAt ? `Prazo: ${new Date(task.dueAt).toLocaleDateString('pt-BR')}` : 'Sem prazo definido'}</span>
+                </article>
+              ))}
+            </div>
+          </section>
         )}
         {error && <p className="auth-message dashboard-error" role="alert">{error}</p>}
         <div className="library-heading">
@@ -398,6 +444,30 @@ export default function DashboardPage() {
           )}
         </div>
       </section>
+      {taskFormOpen && (
+        <div className="task-modal-backdrop" role="presentation" onClick={(event) => {
+          if (event.target === event.currentTarget) setTaskFormOpen(false);
+        }}>
+          <form className="task-modal" onSubmit={publishTask}>
+            <span className="eyebrow">NOVA ATIVIDADE</span>
+            <h2>Enviar para seus alunos</h2>
+            <p>A atividade será enviada aos {linkedStudentIds.length} aluno(s) vinculados.</p>
+            <label>Título
+              <input autoFocus maxLength={100} onChange={(event) => setTaskTitle(event.target.value)} required value={taskTitle} />
+            </label>
+            <label>Instruções
+              <textarea maxLength={2000} onChange={(event) => setTaskDescription(event.target.value)} rows={4} value={taskDescription} />
+            </label>
+            <label>Prazo (opcional)
+              <input onChange={(event) => setTaskDueAt(event.target.value)} type="date" value={taskDueAt} />
+            </label>
+            <div className="task-modal-actions">
+              <button onClick={() => setTaskFormOpen(false)} type="button">Cancelar</button>
+              <button className="task-publish" disabled={!linkedStudentIds.length} type="submit">Publicar atividade</button>
+            </div>
+          </form>
+        </div>
+      )}
       <ClientUniversalFileViewer file={viewerFile} files={visibleFiles} onClose={() => setViewerFile(null)} onChange={setViewerFile} />
       <SharePanel
         open={shareOpen}
