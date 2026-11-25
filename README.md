@@ -63,6 +63,14 @@ Abra `http://localhost:3000`.
 
 O dashboard cria documentos em `files` no Firestore e envia os bytes ao bucket privado `personal-files` no Supabase. O caminho no Storage começa com o UID do usuário Firebase.
 
+## Contas de aluno e professor
+
+1. Em `/login`, escolha **Criar conta** e selecione **Aluno** ou **Professor**.
+2. O aluno informa a série. O professor encontra seu código no dashboard e o compartilha diretamente com seus alunos.
+3. O aluno informa o código em **Vincular**. O vínculo fica em `teacherLinks`; o estudante continua dono do perfil.
+4. O professor pode ler arquivos associados a matérias do aluno após o vínculo. Itens pessoais sem matéria permanecem privados.
+5. Publique as regras atualizadas de [firestore.rules](./firestore.rules) no Firebase sempre que essa política mudar.
+
 ## Segurança
 
 - Não reutilize a API key do Firebase como chave do Gemini.

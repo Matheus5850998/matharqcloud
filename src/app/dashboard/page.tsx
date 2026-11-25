@@ -1,6 +1,6 @@
 'use client';
 
-import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { motion } from 'framer-motion';
 import { Cloud, FolderPlus, GraduationCap, Link2, LogOut, Plus, UploadCloud, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -30,6 +30,7 @@ export default function DashboardPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [classFiles, setClassFiles] = useState<FileMetadata[]>([]);
+  const [linkedStudentIds, setLinkedStudentIds] = useState<string[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
@@ -39,6 +40,7 @@ export default function DashboardPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [currentTime, setCurrentTime] = useState(0);
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
@@ -46,34 +48,71 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!user) return;
-    getDoc(doc(db, 'users', user.uid)).then((snapshot) => {
+    const stopProfile = onSnapshot(doc(db, 'users', user.uid), (snapshot) => {
       if (snapshot.exists()) {
-        const nextProfile = snapshot.data() as UserProfile;
-        setProfile(nextProfile);
-        if (nextProfile.profileType === 'teacher' && nextProfile.studentIds?.length) {
-          const linkedFilesQuery = query(
-            collection(db, 'files'),
-            where('ownerId', 'in', nextProfile.studentIds.slice(0, 10)),
-            orderBy('createdAt', 'desc'),
-          );
-          onSnapshot(linkedFilesQuery, (fileSnapshot) => {
-            setClassFiles(fileSnapshot.docs
-              .map((item) => ({ id: item.id, ...item.data() } as FileMetadata))
-              .filter((file) => file.subjectVisibleToTeacher));
-          });
-        }
+        setProfile(snapshot.data() as UserProfile);
+        setGeminiKey(getGeminiKey(user.uid));
       }
-    });
-    setGeminiKey(getGeminiKey(user.uid));
+    }, () => setError('Não foi possível carregar seu perfil.'));
+    const stopLinks = onSnapshot(
+      query(collection(db, 'teacherLinks'), where('teacherId', '==', user.uid)),
+      (snapshot) => setLinkedStudentIds(snapshot.docs.map((item) => String(item.data().studentId))),
+      () => setError('Não foi possível carregar os vínculos escolares.'),
+    );
     const filesQuery = query(
       collection(db, 'files'),
       where('ownerId', '==', user.uid),
       orderBy('createdAt', 'desc'),
     );
-    return onSnapshot(filesQuery, (snapshot) => {
+    const stopFiles = onSnapshot(filesQuery, (snapshot) => {
       setFiles(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as FileMetadata)));
     }, () => setError('Não foi possível carregar seus arquivos.'));
+    return () => { stopProfile(); stopLinks(); stopFiles(); };
   }, [db, user]);
+
+  useEffect(() => {
+    if (!user || profile?.profileType !== 'teacher') {
+      return;
+    }
+    const unsubscribers = linkedStudentIds.map((studentId) => onSnapshot(
+      query(
+        collection(db, 'files'),
+        where('ownerId', '==', studentId),
+        where('subjectVisibleToTeacher', '==', true),
+      ),
+      (snapshot) => {
+        const studentFiles = snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as FileMetadata));
+        setClassFiles((current) => [
+          ...current.filter((file) => file.ownerId !== studentId),
+          ...studentFiles,
+        ]);
+      },
+      () => setError('Não foi possível carregar os arquivos compartilhados da turma.'),
+    ));
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+  }, [db, linkedStudentIds, profile?.profileType, user]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 60000);
+    const initialTimer = window.setTimeout(() => setCurrentTime(Date.now()), 0);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(initialTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user || profile?.profileType !== 'teacher' || !profile.teacherCode) return;
+    getDoc(doc(db, 'teacherCodes', profile.teacherCode)).then(async (snapshot) => {
+      if (!snapshot.exists()) {
+        await setDoc(doc(db, 'teacherCodes', profile.teacherCode!), {
+          teacherId: user.uid,
+          active: true,
+          createdAt: serverTimestamp(),
+        });
+      }
+    }).catch(() => setError('Não foi possível preparar seu código de professor.'));
+  }, [db, profile?.profileType, profile?.teacherCode, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -108,8 +147,8 @@ export default function DashboardPage() {
     storageUsedBytes: storageUsed,
     looseFiles: files.filter((file) => !file.folderId && !file.subjectId).length,
     pendingSubmissions: tasks.filter((task) => task.kind === 'submission').length,
-    upcomingDeadlines: tasks.filter((task) => task.dueAt && new Date(task.dueAt).getTime() - Date.now() < 7 * 86400000).length,
-  }), [files, storageUsed, tasks]);
+    upcomingDeadlines: tasks.filter((task) => task.dueAt && new Date(task.dueAt).getTime() - currentTime < 7 * 86400000).length,
+  }), [currentTime, files, storageUsed, tasks]);
 
   async function createSubject() {
     if (!user) return;
@@ -158,22 +197,34 @@ export default function DashboardPage() {
   async function linkTeacher() {
     if (!user || !teacherCode.trim()) return;
     setError('');
-    const normalizedCode = teacherCode.trim().toUpperCase();
-    const usersQuery = query(collection(db, 'users'), where('teacherCode', '==', normalizedCode));
-    const result = await getDocs(usersQuery);
-    if (result.empty) {
-      setError('Código de professor não encontrado.');
-      return;
+    try {
+      const normalizedCode = teacherCode.trim().toUpperCase();
+      const codeSnapshot = await getDoc(doc(db, 'teacherCodes', normalizedCode));
+      if (!codeSnapshot.exists() || codeSnapshot.data().active !== true) {
+        setError('Código de professor não encontrado ou desativado.');
+        return;
+      }
+      const teacherId = String(codeSnapshot.data().teacherId);
+      if (teacherId === user.uid) {
+        setError('Você não pode vincular sua conta a si mesma.');
+        return;
+      }
+      const linkId = `${user.uid}_${teacherId}`;
+      await setDoc(doc(db, 'teacherLinks', linkId), {
+        studentId: user.uid,
+        teacherId,
+        teacherCode: normalizedCode,
+        createdAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, 'users', user.uid), {
+        teacherIds: [...new Set([...(profile?.teacherIds || []), teacherId])],
+        updatedAt: serverTimestamp(),
+      });
+      setTeacherCode('');
+      setError('Professor vinculado. Arquivos enviados para suas matérias poderão ser vistos por ele.');
+    } catch (linkError) {
+      setError(linkError instanceof Error ? linkError.message : 'Não foi possível vincular o professor.');
     }
-    const teacher = result.docs[0];
-    await updateDoc(doc(db, 'users', user.uid), {
-      teacherIds: [...new Set([...(profile?.teacherIds || []), teacher.id])],
-      updatedAt: serverTimestamp(),
-    });
-    await updateDoc(doc(db, 'users', teacher.id), {
-      studentIds: [...new Set([...(Array.isArray(teacher.data().studentIds) ? teacher.data().studentIds : []), user.uid])],
-      updatedAt: serverTimestamp(),
-    });
   }
 
   async function handleUpload(fileList: FileList | null) {
@@ -256,12 +307,20 @@ export default function DashboardPage() {
               <input value={teacherCode} onChange={(event) => setTeacherCode(event.target.value)} placeholder="Código do professor" />
               <button onClick={linkTeacher} type="button"><Link2 size={15} /> Vincular</button>
             </div>
+            <span className="school-profile-note">Série: {profile.grade || 'Não informada'}</span>
+            <span className="school-profile-note">Professor(es) vinculado(s): {profile.teacherIds?.length || 0}</span>
             <button onClick={createSubject} type="button"><Plus size={15} /> Nova matéria</button>
             <button onClick={createFolder} type="button"><FolderPlus size={15} /> Nova pasta</button>
           </div>
         )}
         {profile?.profileType === 'teacher' && (
           <div className="school-tools">
+            <div className="teacher-code-card">
+              <span>Seu código de professor</span>
+              <strong>{profile.teacherCode || 'Código indisponível'}</strong>
+              <small>Compartilhe com seus alunos para vincularem suas contas.</small>
+            </div>
+            <span className="school-profile-note">Alunos vinculados: {linkedStudentIds.length}</span>
             <button onClick={createFolder} type="button"><FolderPlus size={15} /> Nova pasta/material</button>
             <button type="button"><Users size={15} /> Gerenciar alunos</button>
             <button type="button" onClick={createTask}><Plus size={15} /> Nova tarefa</button>

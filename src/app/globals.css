@@ -154,6 +154,16 @@ a {
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
+.auth-select {
+  min-height: 46px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 12px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
 .profile-options {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -442,6 +452,31 @@ a {
   border-radius: 9px;
   padding: 8px 12px;
   background: var(--surface);
+}
+
+.school-profile-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.teacher-code-card {
+  display: grid !important;
+  align-content: center;
+  gap: 4px !important;
+  min-width: 220px;
+}
+
+.teacher-code-card span,
+.teacher-code-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.teacher-code-card strong {
+  color: var(--mint);
+  font-family: var(--mono);
+  font-size: 18px;
+  letter-spacing: 0.06em;
 }
 
 .school-tools button,

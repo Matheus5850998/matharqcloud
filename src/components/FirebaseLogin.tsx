@@ -26,26 +26,39 @@ export function FirebaseLogin() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
-  async function ensureProfile(uid: string, displayName: string, preferredType = profileType) {
+  async function ensureProfile(
+    uid: string,
+    displayName: string,
+    preferredType = profileType,
+    grade = 'Não informado',
+  ) {
     const profileRef = doc(db, 'users', uid);
     const existing = await getDoc(profileRef);
     if (!existing.exists()) {
+      const teacherCode = preferredType === 'teacher'
+        ? `PROF-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(-6).toUpperCase()}`
+        : null;
       await setDoc(profileRef, {
         ownerId: uid,
         displayName,
         profileType: preferredType,
-        teacherCode: preferredType === 'teacher'
-          ? `PROF-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(-4).toUpperCase()}`
-          : null,
+        teacherCode,
         subjectIds: [],
         teacherIds: [],
-        grade: preferredType === 'student' ? 'Não informado' : null,
+        grade: preferredType === 'student' ? grade : null,
         studentIds: preferredType === 'teacher' ? [] : [],
         sharePersonalPagesWithTeacher: false,
         storageUsedBytes: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      if (teacherCode) {
+        await setDoc(doc(db, 'teacherCodes', teacherCode), {
+          teacherId: uid,
+          active: true,
+          createdAt: serverTimestamp(),
+        });
+      }
     }
   }
 
@@ -57,12 +70,13 @@ export function FirebaseLogin() {
     const email = String(form.get('email') || '').trim();
     const password = String(form.get('password') || '');
     const name = String(form.get('name') || '').trim();
+    const grade = String(form.get('grade') || 'Não informado');
     try {
       if (mode === 'signup') {
         if (password.length < 12) throw new Error('Use uma senha com pelo menos 12 caracteres.');
         const credential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(credential.user, { displayName: name });
-        await ensureProfile(credential.user.uid, name);
+        await ensureProfile(credential.user.uid, name, profileType, grade);
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
@@ -148,6 +162,21 @@ export function FirebaseLogin() {
               {mode === 'signup' && (
                 <label>Nome completo
                   <div className="input-shell"><UserRound size={17} /><input name="name" maxLength={80} required /></div>
+                </label>
+              )}
+              {mode === 'signup' && profileType === 'student' && (
+                <label>Série / ano escolar
+                  <select className="auth-select" name="grade" defaultValue="" required>
+                    <option disabled value="">Selecione sua série</option>
+                    <option>6º Ano EF</option>
+                    <option>7º Ano EF</option>
+                    <option>8º Ano EF</option>
+                    <option>9º Ano EF</option>
+                    <option>1º Ano EM</option>
+                    <option>2º Ano EM</option>
+                    <option>3º Ano EM</option>
+                    <option>Ensino Superior / Outro</option>
+                  </select>
                 </label>
               )}
               <label>E-mail

@@ -14,26 +14,64 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(uid)).data;
     }
 
-    function canViewProfile(uid) {
-      return isOwner(uid)
-        || (signedIn()
-          && profile(uid).profileType == 'student'
-          && request.auth.uid in profile(uid).teacherIds);
+    function hasTeacherLink(studentId, teacherId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/teacherLinks/$(studentId + '_' + teacherId));
+    }
+
+    function teacherCodeBelongsTo(code, teacherId) {
+      return exists(/databases/$(database)/documents/teacherCodes/$(code))
+        && get(/databases/$(database)/documents/teacherCodes/$(code)).data.teacherId == teacherId
+        && get(/databases/$(database)/documents/teacherCodes/$(code)).data.active == true;
     }
 
     match /users/{uid} {
       allow read: if isOwner(uid)
-        || (signedIn() && profile(uid).profileType == 'student'
-          && request.auth.uid in profile(uid).teacherIds);
-      allow create, update: if isOwner(uid);
+        || hasTeacherLink(uid, request.auth.uid);
+      allow create: if isOwner(uid)
+        && request.resource.data.ownerId == uid
+        && request.resource.data.profileType in ['personal', 'student', 'teacher'];
+      allow update: if isOwner(uid)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.profileType == resource.data.profileType
+        && request.resource.data.teacherCode == resource.data.teacherCode
+        && request.resource.data.studentIds == resource.data.studentIds;
       allow delete: if false;
+    }
+
+    match /teacherCodes/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.teacherId == request.auth.uid
+        && profile(request.auth.uid).profileType == 'teacher'
+        && profile(request.auth.uid).teacherCode == code
+        && request.resource.data.active == true;
+      allow update, delete: if signedIn()
+        && resource.data.teacherId == request.auth.uid;
+    }
+
+    match /teacherLinks/{linkId} {
+      allow read: if signedIn()
+        && (resource.data.studentId == request.auth.uid
+          || resource.data.teacherId == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.teacherId is string
+        && request.resource.data.teacherId != request.auth.uid
+        && request.resource.data.teacherCode is string
+        && linkId == request.auth.uid + '_' + request.resource.data.teacherId
+        && teacherCodeBelongsTo(
+          request.resource.data.teacherCode,
+          request.resource.data.teacherId
+        );
+      allow update, delete: if false;
     }
 
     match /subjects/{subjectId} {
       allow read: if signedIn()
         && (resource.data.ownerId == request.auth.uid
-          || (profile(resource.data.ownerId).profileType == 'student'
-            && request.auth.uid in profile(resource.data.ownerId).teacherIds));
+          || hasTeacherLink(resource.data.ownerId, request.auth.uid));
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update, delete: if signedIn() && resource.data.ownerId == request.auth.uid;
     }
@@ -64,7 +102,7 @@ service cloud.firestore {
           || (resource.data.sharedWithAccountIds != null
             && request.auth.uid in resource.data.sharedWithAccountIds)
           || (resource.data.subjectVisibleToTeacher == true
-            && request.auth.uid in profile(resource.data.ownerId).teacherIds));
+            && hasTeacherLink(resource.data.ownerId, request.auth.uid)));
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.fileSize is int
@@ -77,8 +115,14 @@ service cloud.firestore {
       allow read: if signedIn()
         && (resource.data.teacherId == request.auth.uid
           || request.auth.uid in resource.data.assigneeIds);
-      allow create, update, delete: if signedIn()
+      allow create: if signedIn()
+        && profile(request.auth.uid).profileType == 'teacher'
         && request.resource.data.teacherId == request.auth.uid;
+      allow update: if signedIn()
+        && resource.data.teacherId == request.auth.uid
+        && request.resource.data.teacherId == request.auth.uid;
+      allow delete: if signedIn()
+        && resource.data.teacherId == request.auth.uid;
     }
 
     match /submissions/{submissionId} {
