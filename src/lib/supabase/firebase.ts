@@ -17,9 +17,11 @@ export async function createFirebaseSupabaseClient(auth: Auth) {
     throw new Error('Faça login antes de acessar arquivos.');
   }
 
-  const token = await user.getIdToken();
-  supabaseWithFirebase = createClient(url, key, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
+  supabaseWithFirebase ??= createClient(url, key, {
+    accessToken: async () => {
+      const currentUser = auth.currentUser;
+      return currentUser ? currentUser.getIdToken() : null;
+    },
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
   return supabaseWithFirebase;

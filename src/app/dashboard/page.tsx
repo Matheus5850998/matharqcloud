@@ -1,8 +1,8 @@
 'use client';
 
-import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { motion } from 'framer-motion';
-import { Cloud, FolderPlus, GraduationCap, Link2, LogOut, Plus, UploadCloud, Users } from 'lucide-react';
+import { BookOpen, Cloud, Copy, Files, Folder as FolderIcon, GraduationCap, Link2, LogOut, Plus, UploadCloud, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { useFirebaseAuth } from '@/lib/auth-context';
@@ -34,6 +34,7 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
+  const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [viewerFile, setViewerFile] = useState<FileMetadata | null>(null);
   const [teacherCode, setTeacherCode] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
@@ -59,14 +60,11 @@ export default function DashboardPage() {
       (snapshot) => setLinkedStudentIds(snapshot.docs.map((item) => String(item.data().studentId))),
       () => setError('Não foi possível carregar os vínculos escolares.'),
     );
-    const filesQuery = query(
-      collection(db, 'files'),
-      where('ownerId', '==', user.uid),
-      orderBy('createdAt', 'desc'),
-    );
+    const filesQuery = query(collection(db, 'files'), where('ownerId', '==', user.uid));
     const stopFiles = onSnapshot(filesQuery, (snapshot) => {
       setFiles(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as FileMetadata)));
-    }, () => setError('Não foi possível carregar seus arquivos.'));
+      setError('');
+    }, (snapshotError) => setError(`Falha ao carregar arquivos (${snapshotError.code}): ${snapshotError.message}`));
     return () => { stopProfile(); stopLinks(); stopFiles(); };
   }, [db, user]);
 
@@ -116,15 +114,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!user) return;
-    const subjectsQuery = query(collection(db, 'subjects'), where('ownerId', '==', user.uid), orderBy('createdAt', 'desc'));
+    const subjectsQuery = query(collection(db, 'subjects'), where('ownerId', '==', user.uid));
     const subjectsStop = onSnapshot(subjectsQuery, (snapshot) => {
       setSubjects(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Subject)));
     });
-    const foldersQuery = query(collection(db, 'folders'), where('ownerId', '==', user.uid), orderBy('createdAt', 'desc'));
+    const foldersQuery = query(collection(db, 'folders'), where('ownerId', '==', user.uid));
     const foldersStop = onSnapshot(foldersQuery, (snapshot) => {
       setFolders(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Folder)));
     });
-    const tasksQuery = query(collection(db, 'tasks'), where('assigneeIds', 'array-contains', user.uid), orderBy('createdAt', 'desc'));
+    const tasksQuery = query(collection(db, 'tasks'), where('assigneeIds', 'array-contains', user.uid));
     const tasksStop = onSnapshot(tasksQuery, (snapshot) => {
       setTasks(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Task)));
     });
@@ -138,10 +136,11 @@ export default function DashboardPage() {
 
   const visibleFiles = useMemo(() => {
     const sourceFiles = profile?.profileType === 'teacher' ? classFiles : files;
-    return activeSubject
-      ? sourceFiles.filter((file) => file.subjectId === activeSubject)
-      : sourceFiles;
-  }, [activeSubject, classFiles, files, profile?.profileType]);
+    return sourceFiles.filter((file) =>
+      (!activeSubject || file.subjectId === activeSubject)
+      && (!activeFolder || file.folderId === activeFolder),
+    );
+  }, [activeFolder, activeSubject, classFiles, files, profile?.profileType]);
 
   const smartAlerts = useMemo(() => getLocalAlerts({
     storageUsedBytes: storageUsed,
@@ -153,9 +152,11 @@ export default function DashboardPage() {
   async function createSubject() {
     if (!user) return;
     const suggestion = getLocalSuggestions('Matéria')[subjects.length % 3];
+    const name = window.prompt('Nome da matéria', suggestion.name)?.trim();
+    if (!name) return;
     await addDoc(collection(db, 'subjects'), {
       ownerId: user.uid,
-      name: suggestion.name,
+      name,
       icon: suggestion.icon,
       color: suggestion.color,
       createdAt: serverTimestamp(),
@@ -165,9 +166,11 @@ export default function DashboardPage() {
   async function createFolder() {
     if (!user) return;
     const suggestion = getLocalSuggestions('Pasta')[folders.length % 3];
+    const name = window.prompt('Nome da pasta', suggestion.name)?.trim();
+    if (!name) return;
     await addDoc(collection(db, 'folders'), {
       ownerId: user.uid,
-      name: suggestion.name,
+      name,
       icon: suggestion.icon,
       color: suggestion.color,
       parentId: null,
@@ -238,18 +241,18 @@ export default function DashboardPage() {
           throw new Error('O limite gratuito de 1 GB foi atingido.');
         }
         const teacherId = profile?.teacherIds?.[0] || 'private';
-        const storagePath = `${user.uid}/${teacherId}/root/${Date.now()}-${sanitizeName(file.name)}`;
+        const storagePath = `${user.uid}/${teacherId}/${activeFolder || 'root'}/${Date.now()}-${sanitizeName(file.name)}`;
         const { error: uploadError } = await supabase.storage
           .from('personal-files')
           .upload(storagePath, file, { upsert: false, contentType: file.type });
-        if (uploadError) throw uploadError;
+        if (uploadError) throw new Error(`Supabase Storage (${uploadError.name}): ${uploadError.message}`);
         await setDoc(doc(db, 'files', crypto.randomUUID()), {
           ownerId: user.uid,
           name: file.name,
           mimeType: file.type || 'application/octet-stream',
           fileSize: file.size,
           storagePath,
-          folderId: null,
+          folderId: activeFolder,
           subjectId: activeSubject,
           pageId: null,
           subjectVisibleToTeacher: Boolean(activeSubject),
@@ -271,20 +274,64 @@ export default function DashboardPage() {
     <main className="firebase-dashboard">
       <aside>
         <div className="brand-lockup"><span className="brand-glyph">V</span><span>viana<span className="brand-light">.cloud</span></span></div>
-        <nav>
-          <button className="active" type="button">Biblioteca</button>
-          {subjects.length > 0 && <button type="button" onClick={() => setActiveSubject(null)}>Todas as matérias</button>}
-          {subjects.map((subject) => (
-            <button key={subject.id} className={activeSubject === subject.id ? 'active' : ''} onClick={() => setActiveSubject(subject.id)} type="button">
-              <span>{subject.icon}</span> {subject.name}
+        <div className="sidebar-caption">ESPAÇO PESSOAL</div>
+        <nav className="cloud-sidebar-nav">
+          <button className={!activeSubject && !activeFolder ? 'active' : ''} onClick={() => { setActiveSubject(null); setActiveFolder(null); }} type="button">
+            <Files size={16} /> Biblioteca <span>{files.length}</span>
+          </button>
+          <div className="sidebar-section-heading">
+            <span>PASTAS</span>
+            <button onClick={createFolder} type="button" aria-label="Criar pasta"><Plus size={14} /></button>
+          </div>
+          {folders.map((folder) => (
+            <button key={folder.id} className={activeFolder === folder.id ? 'active' : ''} onClick={() => { setActiveFolder(folder.id); setActiveSubject(folder.subjectId); }} type="button">
+              <FolderIcon size={15} style={{ color: folder.color }} /> <span className="sidebar-item-name">{folder.name}</span>
             </button>
           ))}
+          {profile?.profileType === 'student' && (
+            <>
+              <div className="sidebar-section-heading">
+                <span>MATÉRIAS</span>
+                <button onClick={createSubject} type="button" aria-label="Criar matéria"><Plus size={14} /></button>
+              </div>
+              {subjects.map((subject) => (
+                <button key={subject.id} className={activeSubject === subject.id && !activeFolder ? 'active' : ''} onClick={() => { setActiveSubject(subject.id); setActiveFolder(null); }} type="button">
+                  <BookOpen size={15} style={{ color: subject.color }} /> <span className="sidebar-item-name">{subject.name}</span>
+                </button>
+              ))}
+            </>
+          )}
         </nav>
+        {profile?.profileType === 'teacher' && (
+          <section className="teacher-sidebar">
+            <div className="teacher-sidebar-title"><Users size={15} /><span>ÁREA DO PROFESSOR</span></div>
+            <div className="teacher-sidebar-stat">
+              <span>Alunos vinculados</span>
+              <strong>{linkedStudentIds.length}</strong>
+            </div>
+            <div className="teacher-code-card">
+              <span>CÓDIGO PARA ALUNOS</span>
+              <strong>{profile.teacherCode || 'Indisponível'}</strong>
+              <button onClick={() => {
+                if (profile.teacherCode) void navigator.clipboard.writeText(profile.teacherCode);
+              }} type="button"><Copy size={13} /> Copiar código</button>
+            </div>
+            <button className="teacher-sidebar-action" onClick={createTask} type="button"><Plus size={15} /> Criar atividade</button>
+            <button className="teacher-sidebar-action" disabled={!activeFolder} onClick={() => setShareOpen(true)} type="button"><Link2 size={15} /> Compartilhar pasta</button>
+          </section>
+        )}
+        <div className="sidebar-account">
+          <div className="account-avatar">{(user.displayName || 'U').charAt(0).toUpperCase()}</div>
+          <div className="account-copy">
+            <strong>{user.displayName || 'Usuário'}</strong>
+            <span>{profile?.profileType === 'teacher' ? 'Professor' : profile?.profileType === 'student' ? 'Aluno' : 'Pessoal'}</span>
+          </div>
+        </div>
         <button className="logout" onClick={async () => { await signOut(); router.replace('/login'); }} type="button"><LogOut size={16} /> Sair</button>
       </aside>
       <section>
         <header>
-          <div><span className="eyebrow">ESPAÇO PESSOAL</span><h1>Olá, {user.displayName || 'Usuário'}.</h1></div>
+          <div><span className="eyebrow">{profile?.profileType === 'teacher' ? 'ESPAÇO DOCENTE' : 'SEU ESPAÇO'}</span><h1>Olá, {user.displayName || 'Usuário'}.</h1><p className="dashboard-subtitle">Seus arquivos, organizados com calma e prontos para acompanhar você.</p></div>
           <label className="upload-button"><UploadCloud size={17} /><input type="file" multiple onChange={(event) => handleUpload(event.target.files)} />{uploading ? 'Enviando…' : 'Enviar arquivos'}</label>
         </header>
         <motion.div className="storage-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
@@ -307,24 +354,7 @@ export default function DashboardPage() {
               <input value={teacherCode} onChange={(event) => setTeacherCode(event.target.value)} placeholder="Código do professor" />
               <button onClick={linkTeacher} type="button"><Link2 size={15} /> Vincular</button>
             </div>
-            <span className="school-profile-note">Série: {profile.grade || 'Não informada'}</span>
-            <span className="school-profile-note">Professor(es) vinculado(s): {profile.teacherIds?.length || 0}</span>
-            <button onClick={createSubject} type="button"><Plus size={15} /> Nova matéria</button>
-            <button onClick={createFolder} type="button"><FolderPlus size={15} /> Nova pasta</button>
-          </div>
-        )}
-        {profile?.profileType === 'teacher' && (
-          <div className="school-tools">
-            <div className="teacher-code-card">
-              <span>Seu código de professor</span>
-              <strong>{profile.teacherCode || 'Código indisponível'}</strong>
-              <small>Compartilhe com seus alunos para vincularem suas contas.</small>
-            </div>
-            <span className="school-profile-note">Alunos vinculados: {linkedStudentIds.length}</span>
-            <button onClick={createFolder} type="button"><FolderPlus size={15} /> Nova pasta/material</button>
-            <button type="button"><Users size={15} /> Gerenciar alunos</button>
-            <button type="button" onClick={createTask}><Plus size={15} /> Nova tarefa</button>
-            <button type="button" onClick={() => setShareOpen(true)}><Link2 size={15} /> Compartilhar</button>
+            <span className="school-profile-note">{profile.grade || 'Série não informada'} · {profile.teacherIds?.length || 0} professor(es) vinculado(s)</span>
           </div>
         )}
         {profile && (
@@ -347,7 +377,11 @@ export default function DashboardPage() {
             }}>Salvar chave</button>
           </div>
         )}
-        {error && <p className="auth-message" role="status">{error}</p>}
+        {error && <p className="auth-message dashboard-error" role="alert">{error}</p>}
+        <div className="library-heading">
+          <div><span className="eyebrow">SUA BIBLIOTECA</span><h2>{activeFolder ? folders.find((folder) => folder.id === activeFolder)?.name : activeSubject ? subjects.find((subject) => subject.id === activeSubject)?.name : 'Arquivos recentes'}</h2></div>
+          <span>{visibleFiles.length} {visibleFiles.length === 1 ? 'arquivo' : 'arquivos'}</span>
+        </div>
         <div className="file-grid">
           {visibleFiles.map((file) => (
             <motion.article key={file.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onDoubleClick={() => setViewerFile(file)}>
@@ -355,14 +389,21 @@ export default function DashboardPage() {
               <button className="open-file" type="button" onClick={() => setViewerFile(file)}>Abrir no leitor</button>
             </motion.article>
           ))}
+          {visibleFiles.length === 0 && (
+            <div className="empty-library">
+              <div><Files size={22} /></div>
+              <strong>Nenhum arquivo por aqui ainda</strong>
+              <span>Envie um arquivo ou crie uma pasta para começar.</span>
+            </div>
+          )}
         </div>
       </section>
       <ClientUniversalFileViewer file={viewerFile} files={visibleFiles} onClose={() => setViewerFile(null)} onChange={setViewerFile} />
       <SharePanel
         open={shareOpen}
         ownerId={user.uid}
-        targetId={activeSubject || 'root'}
-        targetName={subjects.find((subject) => subject.id === activeSubject)?.name || 'Espaço pessoal'}
+        targetId={activeFolder || ''}
+        targetName={folders.find((folder) => folder.id === activeFolder)?.name || 'Pasta'}
         onClose={() => setShareOpen(false)}
       />
     </main>
