@@ -3,9 +3,9 @@ import './globals.css';
 import { FirebaseAuthProvider } from '@/lib/auth-context';
 
 export const metadata: Metadata = {
-  title: 'Matharq Cloud',
-  description: 'Seu espaço pessoal para arquivos e apresentações.',
-  applicationName: 'Matharq Cloud',
+  title: 'Viana Cloud',
+  description: 'Seu espaço para estudos, arquivos e apresentações.',
+  applicationName: 'Viana Cloud',
   robots: { index: false, follow: false },
 };
 

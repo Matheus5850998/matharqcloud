@@ -55,9 +55,9 @@ export function Dashboard({
   return (
     <main className="dashboard-shell" style={themeStyle}>
       <aside className="sidebar">
-        <a className="brand-lockup sidebar-brand" href="/" aria-label="Matharq Cloud">
-          <span className="brand-glyph">M</span>
-          <span>matharq<span className="brand-light">.cloud</span></span>
+        <a className="brand-lockup sidebar-brand" href="/" aria-label="Viana Cloud">
+          <span className="brand-glyph">V</span>
+          <span>viana<span className="brand-light">.cloud</span></span>
         </a>
         <div className="sidebar-label">SEU ESPAÇO</div>
         <nav className="sidebar-nav" aria-label="Navegação principal">

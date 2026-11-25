@@ -39,7 +39,7 @@ export async function enrollAuthenticatorAction(): Promise<MfaActionResult> {
 
   const { data, error } = await current.supabase.auth.mfa.enroll({
     factorType: 'totp',
-    friendlyName: 'Matharq Cloud',
+    friendlyName: 'Viana Cloud',
   });
   if (error) {
     throw new Error(`Could not enroll an authenticator: ${error.message}`);

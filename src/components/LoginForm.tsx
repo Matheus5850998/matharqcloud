@@ -85,9 +85,9 @@ export function LoginForm({
         transition={{ duration: 0.7, ease: [0.2, 0.75, 0.2, 1] }}
       >
         <div className="login-story">
-          <a className="brand-lockup" href="/" aria-label="Matharq Cloud">
-            <span className="brand-glyph">M</span>
-            <span>matharq<span className="brand-light">.cloud</span></span>
+          <a className="brand-lockup" href="/" aria-label="Viana Cloud">
+            <span className="brand-glyph">V</span>
+            <span>viana<span className="brand-light">.cloud</span></span>
           </a>
           <div className="story-copy">
             <div className="eyebrow"><span className="live-dot" /> SEU ESPAÇO, SUA NUVEM</div>

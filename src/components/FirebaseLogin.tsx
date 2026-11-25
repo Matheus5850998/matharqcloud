@@ -114,7 +114,7 @@ export function FirebaseLogin() {
   return (
     <main className="auth-shell">
       <motion.section className="auth-story" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <div className="brand-lockup"><span className="brand-glyph">M</span><span>matharq<span className="brand-light">.cloud</span></span></div>
+        <div className="brand-lockup"><span className="brand-glyph">V</span><span>viana<span className="brand-light">.cloud</span></span></div>
         <div className="auth-story-copy">
           <span className="eyebrow"><i className="live-dot" /> SUA CENTRAL DE ESTUDOS</span>
           <h1>Organize ideias.<br /><span>Avance com clareza.</span></h1>

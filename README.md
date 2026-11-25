@@ -1,4 +1,4 @@
-# Matharq Cloud
+# Viana Cloud
 
 Aplicação SaaS pessoal e educacional construída com Next.js, Firebase e Supabase.
 
@@ -14,7 +14,7 @@ Aplicação SaaS pessoal e educacional construída com Next.js, Firebase e Supab
 
 1. Acesse o [Firebase Console](https://console.firebase.google.com/) e crie um projeto.
 2. Ative Authentication > Sign-in method > E-mail/senha e Google.
-3. Adicione `localhost` e o domínio de produção em Authentication > Settings > Authorized domains.
+3. Adicione `localhost` e `vianacloud.vercel.app` em Authentication > Settings > Authorized domains.
 4. Crie um banco Firestore em modo de produção.
 5. Publique [firestore.rules](./firestore.rules) em Firestore > Rules.
 6. Em Project Settings > General > Your apps, registre um app Web.
@@ -83,6 +83,6 @@ npm.cmd run build
 2. Publique o repositório no GitHub.
 3. Importe o projeto na Vercel como Next.js.
 4. Cadastre todas as variáveis `NEXT_PUBLIC_*` nos ambientes Production e Preview.
-5. Configure o domínio em Project Settings > Domains.
-6. Adicione o domínio final como Authorized Domain no Firebase.
+5. Em Project Settings > Domains, adicione/associe `vianacloud.vercel.app` ao projeto e confirme o DNS/ownership solicitado pela Vercel.
+6. Adicione `vianacloud.vercel.app` como Authorized Domain no Firebase.
 7. Mantenha o domínio da Vercel também configurado no Firebase e no Supabase Third-Party Auth.

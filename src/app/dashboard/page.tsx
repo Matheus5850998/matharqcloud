@@ -219,7 +219,7 @@ export default function DashboardPage() {
   return (
     <main className="firebase-dashboard">
       <aside>
-        <div className="brand-lockup"><span className="brand-glyph">M</span><span>matharq<span className="brand-light">.cloud</span></span></div>
+        <div className="brand-lockup"><span className="brand-glyph">V</span><span>viana<span className="brand-light">.cloud</span></span></div>
         <nav>
           <button className="active" type="button">Biblioteca</button>
           {subjects.length > 0 && <button type="button" onClick={() => setActiveSubject(null)}>Todas as matérias</button>}
