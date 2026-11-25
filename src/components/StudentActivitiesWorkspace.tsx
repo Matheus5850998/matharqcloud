@@ -2,14 +2,78 @@
 
 import { addDoc, collection, onSnapshot, query, serverTimestamp, where } from 'firebase/firestore';
 import { motion } from 'framer-motion';
-import { ArrowLeft, ArrowUpRight, CalendarClock, CheckCircle2, Clock3, Code2, FileText, GraduationCap, Send, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, CalendarClock, CheckCircle2, Clock3, Code2, FileText, GraduationCap, Maximize2, Minimize2, Send, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { CorrectionPreview } from '@/components/CorrectionPreview';
 import { getFirebase } from '@/lib/firebase';
 import type { Submission, Task } from '@/lib/models';
 
 const MAX_RESPONSE_LENGTH = 50000;
+
+function formatJavaCode(source: string) {
+  let indentation = 0;
+  let inBlockComment = false;
+  let inTextBlock = false;
+
+  return source.replace(/\r\n?/g, '\n').split('\n').map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return '';
+
+    const lineIndentation = inTextBlock || inBlockComment
+      ? line.match(/^[\t ]*/)?.[0] || ''
+      : '  '.repeat(Math.max(0, indentation - (trimmed.match(/^}+/)?.[0].length || 0)));
+    let braceChange = 0;
+    let quote: '"' | "'" | null = null;
+    let escaped = false;
+
+    for (let index = 0; index < trimmed.length; index += 1) {
+      const character = trimmed[index];
+      const next = trimmed[index + 1];
+
+      if (inBlockComment) {
+        if (character === '*' && next === '/') {
+          inBlockComment = false;
+          index += 1;
+        }
+        continue;
+      }
+      if (inTextBlock) {
+        if (trimmed.slice(index, index + 3) === '"""') {
+          inTextBlock = false;
+          index += 2;
+        }
+        continue;
+      }
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === quote) quote = null;
+        continue;
+      }
+      if (character === '/' && next === '/') break;
+      if (character === '/' && next === '*') {
+        inBlockComment = true;
+        index += 1;
+        continue;
+      }
+      if (trimmed.slice(index, index + 3) === '"""') {
+        inTextBlock = true;
+        index += 2;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+      if (character === '{') braceChange += 1;
+      if (character === '}') braceChange -= 1;
+    }
+
+    indentation = Math.max(0, indentation + braceChange);
+    return `${lineIndentation}${trimmed}`;
+  }).join('\n');
+}
 
 function timestampMillis(value: unknown) {
   if (typeof value === 'string' || typeof value === 'number') return new Date(value).getTime() || 0;
@@ -41,9 +105,11 @@ export function StudentActivitiesWorkspace({ studentId, grade }: { studentId: st
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [response, setResponse] = useState('');
   const [language, setLanguage] = useState('javascript');
+  const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
+  const responseEditor = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const initialTimer = window.setTimeout(() => setCurrentTime(Date.now()), 0);
@@ -104,7 +170,36 @@ export function StudentActivitiesWorkspace({ studentId, grade }: { studentId: st
   function openTask(task: Task) {
     setSelectedTask(task);
     setResponse('');
+    setLanguage(task.language || 'javascript');
+    setExpanded(false);
     setError('');
+  }
+
+  function handleCodeEditorKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Tab' && event.key !== 'Enter') return;
+
+    const editor = event.currentTarget;
+    const { selectionStart, selectionEnd, value } = editor;
+    const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
+    const currentLine = value.slice(lineStart, selectionStart);
+    const currentIndentation = currentLine.match(/^[\t ]*/)?.[0] || '';
+    const inserted = event.key === 'Tab'
+      ? '  '
+      : `\n${currentIndentation}${/\{\s*$/.test(currentLine.trimEnd()) ? '  ' : ''}`;
+
+    event.preventDefault();
+    const nextResponse = `${value.slice(0, selectionStart)}${inserted}${value.slice(selectionEnd)}`;
+    setResponse(nextResponse);
+    const cursorPosition = selectionStart + inserted.length;
+    window.requestAnimationFrame(() => editor.setSelectionRange(cursorPosition, cursorPosition));
+  }
+
+  function applyJavaFormatting() {
+    setResponse(formatJavaCode(response));
+    window.requestAnimationFrame(() => {
+      const editor = responseEditor.current;
+      if (editor) editor.setSelectionRange(editor.value.length, editor.value.length);
+    });
   }
 
   async function submitResponse(event: FormEvent<HTMLFormElement>) {
@@ -201,10 +296,15 @@ export function StudentActivitiesWorkspace({ studentId, grade }: { studentId: st
         <div className="activity-overlay" role="presentation" onClick={(event) => {
           if (event.target === event.currentTarget) setSelectedTask(null);
         }}>
-          <section className="activity-detail-panel" role="dialog" aria-modal="true" aria-labelledby="student-task-title">
+          <section className={`activity-detail-panel ${expanded ? 'activity-detail-panel-expanded' : ''}`} role="dialog" aria-modal="true" aria-labelledby="student-task-title">
             <div className="activity-panel-heading">
               <div><span className="eyebrow">ATIVIDADE · PRAZO {dueLabel(selectedTask.dueAt)}</span><h2 id="student-task-title">{selectedTask.title}</h2></div>
-              <button onClick={() => setSelectedTask(null)} type="button" aria-label="Fechar"><X size={19} /></button>
+              <div className="activity-panel-actions">
+                <button onClick={() => setExpanded((current) => !current)} type="button" aria-label={expanded ? 'Sair da tela cheia' : 'Expandir atividade'} title={expanded ? 'Sair da tela cheia' : 'Expandir atividade'}>
+                  {expanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                </button>
+                <button onClick={() => setSelectedTask(null)} type="button" aria-label="Fechar"><X size={19} /></button>
+              </div>
             </div>
             <p className="activity-instructions">{selectedTask.description || 'Sem instruções adicionais.'}</p>
 
@@ -241,21 +341,26 @@ export function StudentActivitiesWorkspace({ studentId, grade }: { studentId: st
                   {selectedTask.editorMode === 'code' && (
                     <label>Linguagem
                       <select value={language} onChange={(event) => setLanguage(event.target.value)}>
-                        <option value="javascript">JavaScript</option><option value="typescript">TypeScript</option><option value="python">Python</option><option value="html">HTML</option><option value="css">CSS</option><option value="text">Outra</option>
+                        <option value="java">Java</option><option value="javascript">JavaScript</option><option value="typescript">TypeScript</option><option value="python">Python</option><option value="html">HTML</option><option value="css">CSS</option><option value="text">Outra</option>
                       </select>
                     </label>
                   )}
                   <span>{response.length.toLocaleString('pt-BR')}/{MAX_RESPONSE_LENGTH.toLocaleString('pt-BR')}</span>
                 </div>
                 <textarea
-                  className={selectedTask.editorMode === 'code' ? 'response-editor editor-code' : 'response-editor'}
+                  className={selectedTask.editorMode === 'code' ? 'response-editor editor-code student-code-input' : 'response-editor'}
+                  onKeyDown={selectedTask.editorMode === 'code' ? handleCodeEditorKeyDown : undefined}
                   maxLength={MAX_RESPONSE_LENGTH}
                   onChange={(event) => setResponse(event.target.value)}
                   placeholder={selectedTask.editorMode === 'code' ? '// Escreva sua solução aqui…' : 'Escreva sua resposta aqui…'}
                   required
+                  ref={responseEditor}
                   spellCheck={selectedTask.editorMode !== 'code'}
                   value={response}
                 />
+                {selectedTask.editorMode === 'code' && language === 'java' && (
+                  <button className="editor-format-button" onClick={applyJavaFormatting} type="button"><Code2 size={15} /> Formatar Java</button>
+                )}
                 <p className="editor-safety-note">O editor guarda e envia seu texto/código para correção; ele não executa código.</p>
                 {error && <p className="workspace-message" role="alert">{error}</p>}
                 <button className="workspace-primary-button" disabled={saving} type="submit"><Send size={16} />{saving ? 'Enviando…' : 'Enviar para o professor'}</button>

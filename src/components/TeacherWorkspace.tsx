@@ -22,7 +22,9 @@ import {
   GraduationCap,
   Highlighter,
   Inbox,
+  Maximize2,
   MessageSquareText,
+  Minimize2,
   Plus,
   Save,
   Send,
@@ -304,7 +306,7 @@ export function TeacherWorkspace({ teacherId, displayName }: { teacherId: string
                     <label>Prazo de entrega<input onChange={(event) => setDueDate(event.target.value)} type="date" value={dueDate} /></label>
                     <label>Formato da resposta<select onChange={(event) => setEditorMode(event.target.value as 'text' | 'code')} value={editorMode}><option value="text">Texto</option><option value="code">Código</option></select></label>
                   </div>
-                  {editorMode === 'code' && <label>Linguagem sugerida<select onChange={(event) => setLanguage(event.target.value)} value={language}><option value="javascript">JavaScript</option><option value="typescript">TypeScript</option><option value="python">Python</option><option value="html">HTML</option><option value="css">CSS</option><option value="text">Outra</option></select></label>}
+                  {editorMode === 'code' && <label>Linguagem sugerida<select onChange={(event) => setLanguage(event.target.value)} value={language}><option value="java">Java</option><option value="javascript">JavaScript</option><option value="typescript">TypeScript</option><option value="python">Python</option><option value="html">HTML</option><option value="css">CSS</option><option value="text">Outra</option></select></label>}
                 </div>
               </div>
 
@@ -411,8 +413,23 @@ function SubmissionReviewEditor({
   const [feedback, setFeedback] = useState(submission.feedback || '');
   const [correctAnswer, setCorrectAnswer] = useState(submission.correctAnswer || '');
   const [reviewStatus, setReviewStatus] = useState<'Aprovado' | 'Refazer'>(submission.status === 'Refazer' ? 'Refazer' : 'Aprovado');
+  const [expanded, setExpanded] = useState(false);
   const [localError, setLocalError] = useState('');
   const sentAt = timestampMillis(submission.submittedAt);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [expanded]);
 
   function captureSelection() {
     const editor = responseRef.current;
@@ -481,10 +498,16 @@ function SubmissionReviewEditor({
   }
 
   return (
-    <>
+    <div className={expanded ? 'teacher-review-fullscreen' : 'teacher-review-content'}>
       <div className="submission-titlebar">
         <div><span className="eyebrow">ENTREGA DE {studentGrade}</span><h2>{studentName}</h2><p>{task.title} · enviada {sentAt ? `em ${new Date(sentAt).toLocaleString('pt-BR')}` : 'recentemente'}</p></div>
-        <span className={`assignment-status ${submission.status === 'Em Revisão' ? 'status-review' : submission.status === 'Aprovado' ? 'status-complete' : 'status-revision'}`}>{submission.status}</span>
+        <div className="submission-title-actions">
+          <span className={`assignment-status ${submission.status === 'Em Revisão' ? 'status-review' : submission.status === 'Aprovado' ? 'status-complete' : 'status-revision'}`}>{submission.status}</span>
+          <button className="review-fullscreen-toggle" onClick={() => setExpanded((current) => !current)} type="button" aria-label={expanded ? 'Sair da tela cheia' : 'Ver atividade em tela cheia'} title={expanded ? 'Sair da tela cheia' : 'Ver atividade em tela cheia'}>
+            {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            <span>{expanded ? 'Reduzir' : 'Tela cheia'}</span>
+          </button>
+        </div>
       </div>
       {localError && <p className="workspace-message" role="alert">{localError}</p>}
       <div className="review-response-label">{submission.editorMode === 'code' ? <Code2 size={16} /> : <FileText size={16} />} Resposta do aluno · {submission.language || 'Texto'}</div>
@@ -525,6 +548,6 @@ function SubmissionReviewEditor({
         <label>Feedback geral<textarea maxLength={4000} onChange={(event) => setFeedback(event.target.value)} placeholder="Oriente o aluno sobre o resultado…" rows={3} value={feedback} /></label>
         <button className="workspace-primary-button" disabled={saving || submission.status !== 'Em Revisão'} type="submit"><Save size={16} />{saving ? 'Salvando…' : 'Salvar correção e nota'}</button>
       </form>
-    </>
+    </div>
   );
 }

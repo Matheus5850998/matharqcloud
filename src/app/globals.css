@@ -1377,6 +1377,19 @@ a {
   box-shadow: -25px 0 80px rgba(0, 0, 0, 0.28);
 }
 
+.activity-detail-panel-expanded {
+  width: 100%;
+  border-left: 0;
+  padding: clamp(22px, 4vw, 56px);
+}
+
+.activity-detail-panel-expanded .student-response-form,
+.activity-detail-panel-expanded .student-review-card {
+  width: min(1120px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}
+
 .activity-panel-heading {
   display: flex;
   align-items: flex-start;
@@ -1390,17 +1403,28 @@ a {
   letter-spacing: -0.045em;
 }
 
-.activity-panel-heading > button {
+.activity-panel-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.activity-panel-actions > button {
   width: 36px;
   height: 36px;
   display: grid;
-  flex: 0 0 auto;
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+}
+
+.activity-panel-actions > button:hover,
+.review-fullscreen-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
 }
 
 .activity-instructions {
@@ -1543,6 +1567,27 @@ a {
   color: var(--ink);
 }
 
+.editor-format-button,
+.review-fullscreen-toggle {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: rgba(119, 169, 255, 0.06);
+  color: #cbd9ed;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.editor-format-button {
+  margin: 8px 0 2px;
+}
+
 .response-editor {
   width: 100%;
   min-height: 290px;
@@ -1563,6 +1608,14 @@ a {
 
 .response-editor.editor-code {
   font-family: var(--mono);
+}
+
+.response-editor.student-code-input {
+  min-height: min(58vh, 640px);
+}
+
+.activity-detail-panel-expanded .response-editor.student-code-input {
+  min-height: min(62vh, 760px);
 }
 
 .response-editor.review-source {
@@ -2154,11 +2207,43 @@ a {
   padding: 17px;
 }
 
+.teacher-review-content {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.teacher-review-fullscreen {
+  position: fixed;
+  z-index: 150;
+  inset: 12px;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  padding: clamp(18px, 3vw, 38px);
+  background: #10161e;
+  box-shadow: 0 24px 100px rgba(0, 0, 0, 0.58);
+}
+
+.teacher-review-fullscreen .review-source {
+  min-height: min(52vh, 620px);
+}
+
 .submission-titlebar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 15px;
+}
+
+.submission-title-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
 }
 
 .submission-titlebar h2 {
@@ -5326,6 +5411,34 @@ button.nav-item {
 }
 
 @media (max-width: 600px) {
+  .activity-detail-panel-expanded {
+    padding: 18px 14px 80px;
+  }
+  .activity-panel-heading {
+    gap: 10px;
+  }
+  .activity-panel-heading h2 {
+    font-size: 22px;
+  }
+  .editor-toolbar {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .response-editor.student-code-input {
+    min-height: 48vh;
+  }
+  .submission-title-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+  .teacher-review-fullscreen {
+    inset: 5px;
+    gap: 12px;
+    padding: 14px 11px;
+  }
+  .teacher-review-fullscreen .review-source {
+    min-height: 45vh;
+  }
   .workspace-topbar {
     grid-template-columns: 1fr auto;
     padding: 0 14px;

@@ -71,7 +71,7 @@ O dashboard cria documentos em `files` no Firestore e envia os bytes ao bucket p
 2. O aluno informa a série. O professor encontra seu código no dashboard e o compartilha diretamente com seus alunos.
 3. O professor deve entrar no painel e salvar suas matérias antes de compartilhar o código. O aluno informa o código em **Vincular**; o vínculo é registrado no Firestore e no Supabase, e o estudante continua dono do perfil.
 4. Em **Atividades dos alunos**, o professor navega por série, aluno e matéria. Somente matérias cadastradas pelo professor ficam disponíveis; arquivos sem uma matéria compatível permanecem privados.
-5. No `/professor`, o professor publica uma atividade para uma série ou para alunos selecionados; o estudante responde em `/atividades` usando editor de texto ou código.
+5. No `/professor`, o professor publica uma atividade para uma série ou para alunos selecionados; o estudante responde em `/atividades` usando editor de texto ou código. O editor oferece Java, indentação automática ao digitar e formatação de indentação, além de expansão em tela cheia; o professor também pode ampliar a revisão da entrega.
 6. A entrega fica em uma coleção protegida por atividade. O professor atribui nota de 0 a 10, feedback, resposta modelo e marcações por trecho; os erros e correções são mostrados ao aluno em vermelho.
 7. O Storage valida o vínculo e a matéria em RLS, além das regras de leitura dos metadados no Firestore. Isso também protege downloads por URL assinada, não apenas a interface.
 8. Publique as regras e índices do Firestore e execute a migração atualizada do Supabase sempre que essa política mudar.
