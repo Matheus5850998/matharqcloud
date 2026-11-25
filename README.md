@@ -35,7 +35,7 @@ NEXT_PUBLIC_FIREBASE_APP_ID=...
 2. Em Authentication > Providers, adicione Third-Party Auth.
 3. Selecione Firebase e informe o Project ID do Firebase.
 4. Copie a Project URL e a publishable key em Project Settings > API.
-5. Execute [supabase/migrations/20261124_firebase_third_party.sql](./supabase/migrations/20261124_firebase_third_party.sql) no SQL Editor.
+5. Execute os arquivos de `supabase/migrations/` no SQL Editor, em ordem de data. Se o projeto já executou as migrações anteriores, execute também [20261125_teacher_subjects.sql](./supabase/migrations/20261125_teacher_subjects.sql) para criar/atualizar a tabela de matérias e recarregar o cache da API.
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://seu-project-ref.supabase.co
