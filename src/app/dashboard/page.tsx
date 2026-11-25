@@ -1,17 +1,19 @@
 'use client';
 
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { motion } from 'framer-motion';
 import { BookOpen, Cloud, Copy, Files, Folder as FolderIcon, GraduationCap, Link2, LogOut, Plus, Trash2, UploadCloud, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useFirebaseAuth } from '@/lib/auth-context';
 import { getFirebase } from '@/lib/firebase';
 import { createFirebaseSupabaseClient } from '@/lib/supabase/firebase';
 import type { FileMetadata, Folder, Subject, Task, UserProfile } from '@/lib/models';
 import { getLocalAlerts } from '@/lib/ai-service';
 import { SharePanel } from '@/components/SharePanel';
+import { TeacherStudentActivities } from '@/components/TeacherStudentActivities';
 import dynamic from 'next/dynamic';
+import { normalizeSubjectKey } from '@/lib/subjects';
 
 const ClientUniversalFileViewer = dynamic(
   () => import('@/components/UniversalFileViewer').then((module) => module.UniversalFileViewer),
@@ -29,20 +31,17 @@ export default function DashboardPage() {
   const [files, setFiles] = useState<FileMetadata[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [classFiles, setClassFiles] = useState<FileMetadata[]>([]);
   const [linkedStudentIds, setLinkedStudentIds] = useState<string[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [teacherTasks, setTeacherTasks] = useState<Task[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [viewerFile, setViewerFile] = useState<FileMetadata | null>(null);
+  const [viewerFiles, setViewerFiles] = useState<FileMetadata[] | null>(null);
+  const [activeSection, setActiveSection] = useState<'library' | 'student-activities'>('library');
+  const [teacherSubjectsInput, setTeacherSubjectsInput] = useState('');
   const [teacherCode, setTeacherCode] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
-  const [taskFormOpen, setTaskFormOpen] = useState(false);
-  const [taskTitle, setTaskTitle] = useState('');
-  const [taskDescription, setTaskDescription] = useState('');
-  const [taskDueAt, setTaskDueAt] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
@@ -55,7 +54,9 @@ export default function DashboardPage() {
     if (!user) return;
     const stopProfile = onSnapshot(doc(db, 'users', user.uid), (snapshot) => {
       if (snapshot.exists()) {
-        setProfile(snapshot.data() as UserProfile);
+        const nextProfile = snapshot.data() as UserProfile;
+        setProfile(nextProfile);
+        setTeacherSubjectsInput((nextProfile.teacherSubjects || []).join(', '));
       }
     }, () => setError('Não foi possível carregar seu perfil.'));
     const stopLinks = onSnapshot(
@@ -70,28 +71,6 @@ export default function DashboardPage() {
     }, (snapshotError) => setError(`Falha ao carregar arquivos (${snapshotError.code}): ${snapshotError.message}`));
     return () => { stopProfile(); stopLinks(); stopFiles(); };
   }, [db, user]);
-
-  useEffect(() => {
-    if (!user || profile?.profileType !== 'teacher') {
-      return;
-    }
-    const unsubscribers = linkedStudentIds.map((studentId) => onSnapshot(
-      query(
-        collection(db, 'files'),
-        where('ownerId', '==', studentId),
-        where('subjectVisibleToTeacher', '==', true),
-      ),
-      (snapshot) => {
-        const studentFiles = snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as FileMetadata));
-        setClassFiles((current) => [
-          ...current.filter((file) => file.ownerId !== studentId),
-          ...studentFiles,
-        ]);
-      },
-      () => setError('Não foi possível carregar os arquivos compartilhados da turma.'),
-    ));
-    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [db, linkedStudentIds, profile?.profileType, user]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 60000);
@@ -112,8 +91,54 @@ export default function DashboardPage() {
           createdAt: serverTimestamp(),
         });
       }
-    }).catch(() => setError('Não foi possível preparar seu código de professor.'));
-  }, [db, profile?.profileType, profile?.teacherCode, user]);
+      const supabase = await createFirebaseSupabaseClient(auth);
+      const { data: directoryEntry, error: readError } = await supabase
+        .from('teacher_directory')
+        .select('teacher_id')
+        .eq('teacher_id', user.uid)
+        .maybeSingle();
+      if (readError) throw readError;
+      const directoryValues = { teacher_id: user.uid, teacher_code: profile.teacherCode! };
+      const { error: writeError } = directoryEntry
+        ? await supabase.from('teacher_directory').update(directoryValues).eq('teacher_id', user.uid)
+        : await supabase.from('teacher_directory').insert(directoryValues);
+      if (writeError) throw writeError;
+    }).catch((directoryError: unknown) => setError(directoryError instanceof Error
+      ? `Não foi possível preparar o código seguro do professor: ${directoryError.message}`
+      : 'Não foi possível preparar seu código de professor.'));
+  }, [auth, db, profile?.profileType, profile?.teacherCode, user]);
+
+  useEffect(() => {
+    if (!user || profile?.profileType !== 'student') return;
+    let active = true;
+    async function syncStorageLinks() {
+      const links = await getDocs(query(collection(db, 'teacherLinks'), where('studentId', '==', user!.uid)));
+      const supabase = await createFirebaseSupabaseClient(auth);
+      for (const link of links.docs) {
+        const { teacherId, teacherCode } = link.data();
+        if (typeof teacherId !== 'string' || typeof teacherCode !== 'string') continue;
+        const { data, error: readError } = await supabase
+          .from('teacher_student_links')
+          .select('student_id')
+          .eq('student_id', user!.uid)
+          .eq('teacher_id', teacherId)
+          .maybeSingle();
+        if (readError) throw readError;
+        if (!data) {
+          const { error: insertError } = await supabase
+            .from('teacher_student_links')
+            .insert({ student_id: user!.uid, teacher_id: teacherId, teacher_code: teacherCode });
+          if (insertError) throw insertError;
+        }
+      }
+    }
+    syncStorageLinks().catch((syncError: unknown) => {
+      if (active) setError(syncError instanceof Error
+        ? `Falha ao sincronizar vínculo seguro: ${syncError.message}`
+        : 'Falha ao sincronizar o vínculo seguro com o Storage.');
+    });
+    return () => { active = false; };
+  }, [auth, db, profile?.profileType, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -129,11 +154,7 @@ export default function DashboardPage() {
     const tasksStop = onSnapshot(tasksQuery, (snapshot) => {
       setTasks(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Task)));
     });
-    const teacherTasksQuery = query(collection(db, 'tasks'), where('teacherId', '==', user.uid));
-    const teacherTasksStop = onSnapshot(teacherTasksQuery, (snapshot) => {
-      setTeacherTasks(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Task)));
-    });
-    return () => { subjectsStop(); foldersStop(); tasksStop(); teacherTasksStop(); };
+    return () => { subjectsStop(); foldersStop(); tasksStop(); };
   }, [db, user]);
 
   const storageUsed = useMemo(
@@ -142,14 +163,11 @@ export default function DashboardPage() {
   );
 
   const visibleFiles = useMemo(() => {
-    const sourceFiles = profile?.profileType === 'teacher'
-      ? [...files, ...classFiles]
-      : files;
-    return sourceFiles.filter((file) =>
+    return files.filter((file) =>
       (!activeSubject || file.subjectId === activeSubject)
       && (!activeFolder || file.folderId === activeFolder),
     );
-  }, [activeFolder, activeSubject, classFiles, files, profile?.profileType]);
+  }, [activeFolder, activeSubject, files]);
 
   const smartAlerts = useMemo(() => getLocalAlerts({
     storageUsedBytes: storageUsed,
@@ -188,49 +206,77 @@ export default function DashboardPage() {
     });
   }
 
-  async function publishTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user) return;
-    if (linkedStudentIds.length === 0) {
-      setError('Vincule pelo menos um aluno antes de publicar uma atividade.');
-      setTaskFormOpen(false);
-      return;
-    }
+  async function saveTeacherSubjects() {
+    if (!user || profile?.profileType !== 'teacher') return;
+    const subjectNames = [...new Set(teacherSubjectsInput
+      .split(',')
+      .map((name) => name.trim().slice(0, 80))
+      .filter(Boolean))];
+    const subjectRows = subjectNames
+      .map((subject_name) => ({ teacher_id: user.uid, subject_name, subject_key: normalizeSubjectKey(subject_name) }))
+      .filter((subject) => subject.subject_key);
     try {
-      await addDoc(collection(db, 'tasks'), {
-        teacherId: user.uid,
-        title: taskTitle.trim(),
-        description: taskDescription.trim(),
-        grade: 'Alunos vinculados',
-        assigneeIds: linkedStudentIds,
-        kind: 'submission',
-        dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : null,
-        createdAt: serverTimestamp(),
+      const supabase = await createFirebaseSupabaseClient(auth);
+      const { error: deleteError } = await supabase.from('teacher_subjects').delete().eq('teacher_id', user.uid);
+      if (deleteError) throw new Error(`Falha ao atualizar permissões das matérias: ${deleteError.message}`);
+      if (subjectRows.length) {
+        const { error: insertError } = await supabase.from('teacher_subjects').insert(subjectRows);
+        if (insertError) throw new Error(`Falha ao salvar matérias no Storage: ${insertError.message}`);
+      }
+      await updateDoc(doc(db, 'users', user.uid), {
+        teacherSubjects: subjectRows.map((subject) => subject.subject_name),
+        teacherSubjectKeys: subjectRows.map((subject) => subject.subject_key),
       });
-      setTaskTitle('');
-      setTaskDescription('');
-      setTaskDueAt('');
-      setTaskFormOpen(false);
-      setError('Atividade publicada para os alunos vinculados.');
-    } catch (taskError) {
-      setError(taskError instanceof Error ? taskError.message : 'Não foi possível publicar a atividade.');
+      setError('Matérias atualizadas. O acesso aos arquivos foi ajustado.');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Não foi possível salvar suas matérias.');
     }
   }
 
   async function deleteFolder(folder: Folder) {
     if (!user) return;
     try {
-      const [filesInFolder, childFolders] = await Promise.all([
-        getDocs(query(collection(db, 'files'), where('ownerId', '==', user.uid), where('folderId', '==', folder.id))),
-        getDocs(query(collection(db, 'folders'), where('ownerId', '==', user.uid), where('parentId', '==', folder.id))),
+      const [allFolders, allFiles] = await Promise.all([
+        getDocs(query(collection(db, 'folders'), where('ownerId', '==', user.uid))),
+        getDocs(query(collection(db, 'files'), where('ownerId', '==', user.uid))),
       ]);
-      if (!filesInFolder.empty || !childFolders.empty) {
-        setError('A pasta contém itens. Mova ou remova os arquivos e subpastas antes de apagá-la.');
-        return;
+      const folderIds = new Set([folder.id]);
+      let foundChild = true;
+      while (foundChild) {
+        foundChild = false;
+        for (const candidate of allFolders.docs) {
+          const parentId = candidate.data().parentId;
+          if (typeof parentId === 'string' && folderIds.has(parentId) && !folderIds.has(candidate.id)) {
+            folderIds.add(candidate.id);
+            foundChild = true;
+          }
+        }
       }
-      if (!window.confirm(`Apagar a pasta “${folder.name}”?`)) return;
-      await deleteDoc(doc(db, 'folders', folder.id));
-      if (activeFolder === folder.id) setActiveFolder(null);
+      const foldersToDelete = allFolders.docs.filter((item) => folderIds.has(item.id));
+      const filesToDelete = allFiles.docs.filter((item) => {
+        const folderId = item.data().folderId;
+        return typeof folderId === 'string' && folderIds.has(folderId);
+      });
+      if (!window.confirm(`Apagar “${folder.name}” e seu conteúdo? ${foldersToDelete.length} pasta(s) e ${filesToDelete.length} arquivo(s) serão removidos permanentemente.`)) return;
+
+      const supabase = await createFirebaseSupabaseClient(auth);
+      const storagePaths = filesToDelete
+        .map((item) => item.data().storagePath)
+        .filter((path): path is string => typeof path === 'string');
+      for (let index = 0; index < storagePaths.length; index += 100) {
+        const { error: storageError } = await supabase.storage
+          .from('personal-files')
+          .remove(storagePaths.slice(index, index + 100));
+        if (storageError) throw new Error(`Não foi possível remover os arquivos do Storage: ${storageError.message}`);
+      }
+
+      const docsToDelete = [...filesToDelete, ...foldersToDelete];
+      for (let index = 0; index < docsToDelete.length; index += 450) {
+        const batch = writeBatch(db);
+        docsToDelete.slice(index, index + 450).forEach((item) => batch.delete(item.ref));
+        await batch.commit();
+      }
+      if (activeFolder && folderIds.has(activeFolder)) setActiveFolder(null);
       setError('Pasta apagada.');
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Não foi possível apagar a pasta.');
@@ -253,6 +299,20 @@ export default function DashboardPage() {
         return;
       }
       const linkId = `${user.uid}_${teacherId}`;
+      const supabase = await createFirebaseSupabaseClient(auth);
+      const { data: existingLink, error: existingError } = await supabase
+        .from('teacher_student_links')
+        .select('student_id')
+        .eq('student_id', user.uid)
+        .eq('teacher_id', teacherId)
+        .maybeSingle();
+      if (existingError) throw new Error(`Falha ao verificar vínculo no Storage: ${existingError.message}`);
+      if (!existingLink) {
+        const { error: storageLinkError } = await supabase
+          .from('teacher_student_links')
+          .insert({ student_id: user.uid, teacher_id: teacherId, teacher_code: normalizedCode });
+        if (storageLinkError) throw new Error(`Falha ao proteger o vínculo no Storage: ${storageLinkError.message}`);
+      }
       await setDoc(doc(db, 'teacherLinks', linkId), {
         studentId: user.uid,
         teacherId,
@@ -276,15 +336,35 @@ export default function DashboardPage() {
     setError('');
     try {
       const supabase = await createFirebaseSupabaseClient(auth);
+      const subject = subjects.find((item) => item.id === activeSubject);
+      const subjectKey = subject ? normalizeSubjectKey(subject.name) : '';
+      let sharedTeacherId: string | null = null;
+      const linkedTeacherId = profile?.teacherIds?.[0];
+      if (subject && subjectKey && linkedTeacherId) {
+        const { data: teacherSubject, error: permissionError } = await supabase
+          .from('teacher_subjects')
+          .select('subject_key')
+          .eq('teacher_id', linkedTeacherId)
+          .eq('subject_key', subjectKey)
+          .maybeSingle();
+        if (permissionError) throw new Error(`Não foi possível verificar a matéria do professor: ${permissionError.message}`);
+        if (teacherSubject) sharedTeacherId = linkedTeacherId;
+      }
       for (const file of Array.from(fileList)) {
         if (storageUsed + file.size > 1024 * 1024 * 1024) {
           throw new Error('O limite gratuito de 1 GB foi atingido.');
         }
-        const teacherId = profile?.teacherIds?.[0] || 'private';
-        const storagePath = `${user.uid}/${teacherId}/${activeFolder || 'root'}/${Date.now()}-${sanitizeName(file.name)}`;
+        const storagePath = `${user.uid}/${sharedTeacherId || 'private'}/${activeFolder || 'root'}/${Date.now()}-${sanitizeName(file.name)}`;
         const { error: uploadError } = await supabase.storage
           .from('personal-files')
-          .upload(storagePath, file, { upsert: false, contentType: file.type });
+          .upload(storagePath, file, {
+            upsert: false,
+            contentType: file.type,
+            metadata: {
+              teacher_id: sharedTeacherId,
+              subject_key: sharedTeacherId ? subjectKey : '',
+            },
+          });
         if (uploadError) throw new Error(`Supabase Storage (${uploadError.name}): ${uploadError.message}`);
         await setDoc(doc(db, 'files', crypto.randomUUID()), {
           ownerId: user.uid,
@@ -294,8 +374,10 @@ export default function DashboardPage() {
           storagePath,
           folderId: activeFolder,
           subjectId: activeSubject,
+          subjectName: subject?.name || null,
+          subjectKey: subjectKey || null,
           pageId: null,
-          subjectVisibleToTeacher: Boolean(activeSubject),
+          subjectVisibleToTeacher: Boolean(sharedTeacherId && subjectKey),
           sharedWithAccountIds: [],
           createdAt: serverTimestamp(),
         });
@@ -304,6 +386,20 @@ export default function DashboardPage() {
       setError(uploadFailure instanceof Error ? uploadFailure.message : 'Não foi possível enviar o arquivo.');
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function deleteFile(file: FileMetadata) {
+    if (!user || file.ownerId !== user.uid) return;
+    if (!window.confirm(`Apagar o arquivo “${file.name}” permanentemente?`)) return;
+    try {
+      const supabase = await createFirebaseSupabaseClient(auth);
+      const { error: storageError } = await supabase.storage.from('personal-files').remove([file.storagePath]);
+      if (storageError) throw new Error(`Não foi possível apagar o arquivo do Storage: ${storageError.message}`);
+      await deleteDoc(doc(db, 'files', file.id));
+      setError('Arquivo apagado.');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Não foi possível apagar o arquivo.');
     }
   }
 
@@ -316,7 +412,7 @@ export default function DashboardPage() {
         <div className="brand-lockup"><span className="brand-glyph">V</span><span>viana<span className="brand-light">.cloud</span></span></div>
         <div className="sidebar-caption">ESPAÇO PESSOAL</div>
         <nav className="cloud-sidebar-nav">
-          <button className={!activeSubject && !activeFolder ? 'active' : ''} onClick={() => { setActiveSubject(null); setActiveFolder(null); }} type="button">
+          <button className={activeSection === 'library' && !activeSubject && !activeFolder ? 'active' : ''} onClick={() => { setActiveSection('library'); setActiveSubject(null); setActiveFolder(null); }} type="button">
             <Files size={16} /> Biblioteca <span>{files.length}</span>
           </button>
           <div className="sidebar-section-heading">
@@ -333,6 +429,7 @@ export default function DashboardPage() {
           ))}
           {profile?.profileType === 'student' && (
             <>
+              <button onClick={() => router.push('/atividades')} type="button"><GraduationCap size={15} /> Minhas atividades <span>{tasks.length}</span></button>
               <div className="sidebar-section-heading">
                 <span>MATÉRIAS</span>
                 <button onClick={createSubject} type="button" aria-label="Criar matéria"><Plus size={14} /></button>
@@ -359,14 +456,13 @@ export default function DashboardPage() {
                 if (profile.teacherCode) void navigator.clipboard.writeText(profile.teacherCode);
               }} type="button"><Copy size={13} /> Copiar código</button>
             </div>
-            <button className="teacher-sidebar-action" onClick={() => setTaskFormOpen(true)} type="button"><Plus size={15} /> Criar atividade</button>
+            <button className="teacher-sidebar-action" onClick={() => router.push('/professor')} type="button"><GraduationCap size={15} /> Painel do professor</button>
+            <button className={`teacher-sidebar-action ${activeSection === 'student-activities' ? 'selected' : ''}`} onClick={() => setActiveSection('student-activities')} type="button"><Users size={15} /> Arquivos por aluno</button>
             <button className="teacher-sidebar-action" disabled={!activeFolder} onClick={() => setShareOpen(true)} type="button"><Link2 size={15} /> Compartilhar pasta</button>
-            {teacherTasks.slice(0, 3).map((task) => (
-              <div className="sidebar-task-item" key={task.id}>
-                <strong>{task.title}</strong>
-                <span>{task.assigneeIds.length} aluno(s) · {task.dueAt ? new Date(task.dueAt).toLocaleDateString('pt-BR') : 'Sem prazo'}</span>
-              </div>
-            ))}
+            <label className="teacher-subjects-field">MATÉRIAS QUE LECIONO
+              <input value={teacherSubjectsInput} onChange={(event) => setTeacherSubjectsInput(event.target.value)} placeholder="Ex.: Matemática, História" />
+            </label>
+            <button className="teacher-sidebar-action" onClick={() => void saveTeacherSubjects()} type="button">Salvar matérias</button>
           </section>
         )}
         <div className="sidebar-account">
@@ -378,7 +474,13 @@ export default function DashboardPage() {
         </div>
         <button className="logout" onClick={async () => { await signOut(); router.replace('/login'); }} type="button"><LogOut size={16} /> Sair</button>
       </aside>
-      <section>
+      {profile?.profileType === 'teacher' && activeSection === 'student-activities' ? (
+        <TeacherStudentActivities
+          teacherId={user.uid}
+          teacherSubjectKeys={profile.teacherSubjectKeys || []}
+          onOpenFile={(file, selectedFiles) => { setViewerFiles(selectedFiles); setViewerFile(file); }}
+        />
+      ) : <section>
         <header>
           <div><span className="eyebrow">{profile?.profileType === 'teacher' ? 'ESPAÇO DOCENTE' : 'SEU ESPAÇO'}</span><h1>Olá, {user.displayName || 'Usuário'}.</h1><p className="dashboard-subtitle">Seus arquivos, organizados com calma e prontos para acompanhar você.</p></div>
           <label className="upload-button"><UploadCloud size={17} /><input type="file" multiple onChange={(event) => handleUpload(event.target.files)} />{uploading ? 'Enviando…' : 'Enviar arquivos'}</label>
@@ -412,15 +514,9 @@ export default function DashboardPage() {
               <div><span className="eyebrow">DA SUA TURMA</span><h2>Atividades</h2></div>
               <span>{tasks.length} recebida(s)</span>
             </div>
-            <div className="task-grid">
-              {tasks.map((task) => (
-                <article key={task.id}>
-                  <strong>{task.title}</strong>
-                  <p>{task.description || 'Atividade enviada pelo professor.'}</p>
-                  <span>{task.dueAt ? `Prazo: ${new Date(task.dueAt).toLocaleDateString('pt-BR')}` : 'Sem prazo definido'}</span>
-                </article>
-              ))}
-            </div>
+            <button className="student-activities-shortcut" onClick={() => router.push('/atividades')} type="button">
+              Abrir central de atividades <GraduationCap size={16} />
+            </button>
           </section>
         )}
         {error && <p className="auth-message dashboard-error" role="alert">{error}</p>}
@@ -432,7 +528,8 @@ export default function DashboardPage() {
           {visibleFiles.map((file) => (
             <motion.article key={file.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onDoubleClick={() => setViewerFile(file)}>
               <strong>{file.name}</strong><span>{Math.max(1, Math.ceil(file.fileSize / 1024))} KB</span>
-              <button className="open-file" type="button" onClick={() => setViewerFile(file)}>Abrir no leitor</button>
+              <button className="open-file" type="button" onClick={() => { setViewerFiles(null); setViewerFile(file); }}>Abrir no leitor</button>
+              {file.ownerId === user.uid && <button className="delete-file" type="button" onClick={() => void deleteFile(file)} aria-label={`Apagar ${file.name}`}><Trash2 size={14} /> Apagar</button>}
             </motion.article>
           ))}
           {visibleFiles.length === 0 && (
@@ -443,32 +540,8 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-      </section>
-      {taskFormOpen && (
-        <div className="task-modal-backdrop" role="presentation" onClick={(event) => {
-          if (event.target === event.currentTarget) setTaskFormOpen(false);
-        }}>
-          <form className="task-modal" onSubmit={publishTask}>
-            <span className="eyebrow">NOVA ATIVIDADE</span>
-            <h2>Enviar para seus alunos</h2>
-            <p>A atividade será enviada aos {linkedStudentIds.length} aluno(s) vinculados.</p>
-            <label>Título
-              <input autoFocus maxLength={100} onChange={(event) => setTaskTitle(event.target.value)} required value={taskTitle} />
-            </label>
-            <label>Instruções
-              <textarea maxLength={2000} onChange={(event) => setTaskDescription(event.target.value)} rows={4} value={taskDescription} />
-            </label>
-            <label>Prazo (opcional)
-              <input onChange={(event) => setTaskDueAt(event.target.value)} type="date" value={taskDueAt} />
-            </label>
-            <div className="task-modal-actions">
-              <button onClick={() => setTaskFormOpen(false)} type="button">Cancelar</button>
-              <button className="task-publish" disabled={!linkedStudentIds.length} type="submit">Publicar atividade</button>
-            </div>
-          </form>
-        </div>
-      )}
-      <ClientUniversalFileViewer file={viewerFile} files={visibleFiles} onClose={() => setViewerFile(null)} onChange={setViewerFile} />
+      </section>}
+      <ClientUniversalFileViewer file={viewerFile} files={viewerFiles || visibleFiles} onClose={() => { setViewerFile(null); setViewerFiles(null); }} onChange={setViewerFile} />
       <SharePanel
         open={shareOpen}
         ownerId={user.uid}

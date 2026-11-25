@@ -25,6 +25,14 @@ export function FirebaseLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [welcomeName, setWelcomeName] = useState('');
+
+  async function enterDashboard(name: string) {
+    setWelcomeName(name || 'de volta');
+    await new Promise((resolve) => window.setTimeout(resolve, 1550));
+    router.replace('/dashboard');
+    router.refresh();
+  }
 
   async function ensureProfile(
     uid: string,
@@ -45,6 +53,8 @@ export function FirebaseLogin() {
         teacherCode,
         subjectIds: [],
         teacherIds: [],
+        teacherSubjects: [],
+        teacherSubjectKeys: [],
         grade: preferredType === 'student' ? grade : null,
         studentIds: preferredType === 'teacher' ? [] : [],
         sharePersonalPagesWithTeacher: false,
@@ -77,11 +87,11 @@ export function FirebaseLogin() {
         const credential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(credential.user, { displayName: name });
         await ensureProfile(credential.user.uid, name, profileType, grade);
+        await enterDashboard(name);
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        const credential = await signInWithEmailAndPassword(auth, email, password);
+        await enterDashboard(credential.user.displayName || 'de volta');
       }
-      router.replace('/dashboard');
-      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Não foi possível concluir o acesso.');
     } finally {
@@ -99,8 +109,7 @@ export function FirebaseLogin() {
         credential.user.displayName || 'Usuário',
         profileType,
       );
-      router.replace('/dashboard');
-      router.refresh();
+      await enterDashboard(credential.user.displayName || 'de volta');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Não foi possível entrar com Google.');
     } finally {
@@ -196,6 +205,30 @@ export function FirebaseLogin() {
           </motion.div>
         </AnimatePresence>
       </section>
+      <AnimatePresence>
+        {welcomeName && (
+          <motion.div
+            className="login-welcome-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            aria-live="polite"
+          >
+            <motion.div
+              className="login-welcome-card"
+              initial={{ opacity: 0, y: 22, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <span className="welcome-orbit"><span /></span>
+              <span className="eyebrow">ACESSO CONFIRMADO</span>
+              <h2>Olá novamente, <span>{welcomeName}</span>.</h2>
+              <p>Preparando seu espaço para continuar.</p>
+              <div className="welcome-progress"><span /></div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

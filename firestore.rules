@@ -19,10 +19,23 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/teacherLinks/$(studentId + '_' + teacherId));
     }
 
+    function teacherCanReadSubject(studentId, subjectKey) {
+      return signedIn()
+        && profile(request.auth.uid).profileType == 'teacher'
+        && hasTeacherLink(studentId, request.auth.uid)
+        && subjectKey is string
+        && profile(request.auth.uid).teacherSubjectKeys is list
+        && subjectKey in profile(request.auth.uid).teacherSubjectKeys;
+    }
+
     function teacherCodeBelongsTo(code, teacherId) {
       return exists(/databases/$(database)/documents/teacherCodes/$(code))
         && get(/databases/$(database)/documents/teacherCodes/$(code)).data.teacherId == teacherId
         && get(/databases/$(database)/documents/teacherCodes/$(code)).data.active == true;
+    }
+
+    function task(taskId) {
+      return get(/databases/$(database)/documents/tasks/$(taskId)).data;
     }
 
     match /users/{uid} {
@@ -99,10 +112,8 @@ service cloud.firestore {
     match /files/{fileId} {
       allow read: if signedIn()
         && (resource.data.ownerId == request.auth.uid
-          || (resource.data.sharedWithAccountIds != null
-            && request.auth.uid in resource.data.sharedWithAccountIds)
           || (resource.data.subjectVisibleToTeacher == true
-            && hasTeacherLink(resource.data.ownerId, request.auth.uid)));
+            && teacherCanReadSubject(resource.data.ownerId, resource.data.subjectKey)));
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.fileSize is int
@@ -117,24 +128,78 @@ service cloud.firestore {
           || request.auth.uid in resource.data.assigneeIds);
       allow create: if signedIn()
         && profile(request.auth.uid).profileType == 'teacher'
-        && request.resource.data.teacherId == request.auth.uid;
+        && request.resource.data.teacherId == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 4000
+        && request.resource.data.assigneeIds is list
+        && request.resource.data.assigneeIds.size() > 0
+        && request.resource.data.assigneeIds.size() <= 500
+        && request.resource.data.kind == 'submission'
+        && request.resource.data.editorMode in ['text', 'code']
+        && request.resource.data.targetType in ['grade', 'students'];
       allow update: if signedIn()
         && resource.data.teacherId == request.auth.uid
         && request.resource.data.teacherId == request.auth.uid;
       allow delete: if signedIn()
         && resource.data.teacherId == request.auth.uid;
+
+      match /submissions/{submissionId} {
+        allow read: if signedIn()
+          && (task(taskId).teacherId == request.auth.uid
+            || (resource.data.studentId == request.auth.uid
+              && request.auth.uid in task(taskId).assigneeIds));
+        allow create: if signedIn()
+          && task(taskId).assigneeIds is list
+          && request.resource.data.taskId == taskId
+          && request.resource.data.teacherId == task(taskId).teacherId
+          && request.resource.data.studentId == request.auth.uid
+          && request.auth.uid in task(taskId).assigneeIds
+          && request.resource.data.content is string
+          && request.resource.data.content.size() <= 50000
+          && request.resource.data.editorMode in ['text', 'code']
+          && request.resource.data.editorMode == (task(taskId).get('editorMode', 'text') == 'code' ? 'code' : 'text')
+          && request.resource.data.fileId == null
+          && request.resource.data.status == 'Em Revisão'
+          && request.resource.data.gradeValue == null
+          && request.resource.data.feedback == ''
+          && request.resource.data.corrections is list
+          && request.resource.data.corrections.size() == 0
+          && request.resource.data.correctAnswer == ''
+          && (request.resource.data.language == null
+            || (request.resource.data.language is string
+              && request.resource.data.language.size() <= 30));
+        allow update: if signedIn()
+          && task(taskId).teacherId == request.auth.uid
+          && resource.data.teacherId == request.auth.uid
+          && request.resource.data.taskId == resource.data.taskId
+          && request.resource.data.studentId == resource.data.studentId
+          && request.resource.data.teacherId == resource.data.teacherId
+          && request.resource.data.content == resource.data.content
+          && request.resource.data.editorMode == resource.data.editorMode
+          && request.resource.data.language == resource.data.language
+          && request.resource.data.fileId == resource.data.fileId
+          && request.resource.data.submittedAt == resource.data.submittedAt
+          && request.resource.data.gradeValue is number
+          && request.resource.data.gradeValue >= 0
+          && request.resource.data.gradeValue <= 10
+          && request.resource.data.feedback is string
+          && request.resource.data.feedback.size() <= 4000
+          && request.resource.data.correctAnswer is string
+          && request.resource.data.correctAnswer.size() <= 10000
+          && request.resource.data.corrections is list
+          && request.resource.data.corrections.size() <= 100
+          && request.resource.data.status in ['Aprovado', 'Refazer']
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['gradeValue', 'feedback', 'corrections', 'correctAnswer', 'status', 'reviewedAt', 'updatedAt']);
+        allow delete: if false;
+      }
     }
 
     match /submissions/{submissionId} {
-      allow read: if signedIn()
-        && (resource.data.studentId == request.auth.uid
-          || resource.data.teacherId == request.auth.uid);
-      allow create: if signedIn()
-        && request.resource.data.studentId == request.auth.uid;
-      allow update: if signedIn()
-        && (resource.data.studentId == request.auth.uid
-          || resource.data.teacherId == request.auth.uid);
-      allow delete: if signedIn() && resource.data.studentId == request.auth.uid;
+      allow read, write: if false;
     }
 
     match /shares/{shareId} {

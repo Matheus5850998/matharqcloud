@@ -9,6 +9,8 @@ export type UserProfile = {
   subjectIds: string[];
   teacherIds: string[];
   studentIds: string[];
+  teacherSubjects: string[];
+  teacherSubjectKeys: string[];
   sharePersonalPagesWithTeacher: boolean;
   storageUsedBytes: number;
 };
@@ -32,6 +34,8 @@ export type Folder = {
   private: boolean;
   sharedWithAccountIds: string[];
   subjectId: string | null;
+  subjectName: string | null;
+  subjectKey: string | null;
   createdAt: unknown;
 };
 
@@ -44,6 +48,8 @@ export type FileMetadata = {
   storagePath: string;
   folderId: string | null;
   subjectId: string | null;
+  subjectName?: string | null;
+  subjectKey?: string | null;
   pageId: string | null;
   subjectVisibleToTeacher: boolean;
   sharedWithAccountIds: string[];
@@ -59,7 +65,19 @@ export type Task = {
   assigneeIds: string[];
   kind: 'support' | 'submission';
   dueAt: string | null;
+  targetType?: 'grade' | 'students' | 'all-linked';
+  targetGrade?: string | null;
+  editorMode?: 'text' | 'code';
+  language?: string | null;
   createdAt: unknown;
+};
+
+export type CorrectionMark = {
+  start: number;
+  end: number;
+  wrongText: string;
+  correctText: string;
+  note: string;
 };
 
 export type Submission = {
@@ -68,9 +86,15 @@ export type Submission = {
   studentId: string;
   teacherId: string;
   fileId: string | null;
+  content: string;
+  editorMode: 'text' | 'code';
+  language: string | null;
   status: 'Pendente' | 'Em Revisão' | 'Aprovado' | 'Refazer';
-  gradeValue: string;
+  gradeValue: number | null;
   feedback: string;
+  corrections: CorrectionMark[];
+  correctAnswer: string;
   submittedAt: unknown;
   updatedAt: unknown;
+  reviewedAt?: unknown;
 };

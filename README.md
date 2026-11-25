@@ -16,7 +16,7 @@ Aplicação SaaS pessoal e educacional construída com Next.js, Firebase e Supab
 2. Ative Authentication > Sign-in method > E-mail/senha e Google.
 3. Adicione `localhost` e `vianacloud.vercel.app` em Authentication > Settings > Authorized domains.
 4. Crie um banco Firestore em modo de produção.
-5. Publique [firestore.rules](./firestore.rules) em Firestore > Rules.
+5. Publique [firestore.rules](./firestore.rules) em Firestore > Rules e o índice de [firestore.indexes.json](./firestore.indexes.json) em Firestore > Indexes. Com Firebase CLI, execute `firebase deploy --only firestore`.
 6. Em Project Settings > General > Your apps, registre um app Web.
 7. Copie os valores do Firebase SDK para `.env.local`:
 
@@ -60,6 +60,8 @@ Abra `http://localhost:3000`.
 
 - `/login`: entrar, criar conta, Google e recuperação de senha.
 - `/dashboard`: biblioteca pessoal, envio e monitoramento de armazenamento.
+- `/atividades`: prazos, resposta no editor e notas/correções do aluno.
+- `/professor`: painel docente independente para publicar, acompanhar e corrigir atividades.
 
 O dashboard cria documentos em `files` no Firestore e envia os bytes ao bucket privado `personal-files` no Supabase. O caminho no Storage começa com o UID do usuário Firebase.
 
@@ -67,9 +69,12 @@ O dashboard cria documentos em `files` no Firestore e envia os bytes ao bucket p
 
 1. Em `/login`, escolha **Criar conta** e selecione **Aluno** ou **Professor**.
 2. O aluno informa a série. O professor encontra seu código no dashboard e o compartilha diretamente com seus alunos.
-3. O aluno informa o código em **Vincular**. O vínculo fica em `teacherLinks`; o estudante continua dono do perfil.
-4. O professor pode ler arquivos associados a matérias do aluno após o vínculo. Itens pessoais sem matéria permanecem privados.
-5. Publique as regras atualizadas de [firestore.rules](./firestore.rules) no Firebase sempre que essa política mudar.
+3. O professor deve entrar no painel e salvar suas matérias antes de compartilhar o código. O aluno informa o código em **Vincular**; o vínculo é registrado no Firestore e no Supabase, e o estudante continua dono do perfil.
+4. Em **Atividades dos alunos**, o professor navega por série, aluno e matéria. Somente matérias cadastradas pelo professor ficam disponíveis; arquivos sem uma matéria compatível permanecem privados.
+5. No `/professor`, o professor publica uma atividade para uma série ou para alunos selecionados; o estudante responde em `/atividades` usando editor de texto ou código.
+6. A entrega fica em uma coleção protegida por atividade. O professor atribui nota de 0 a 10, feedback, resposta modelo e marcações por trecho; os erros e correções são mostrados ao aluno em vermelho.
+7. O Storage valida o vínculo e a matéria em RLS, além das regras de leitura dos metadados no Firestore. Isso também protege downloads por URL assinada, não apenas a interface.
+8. Publique as regras e índices do Firestore e execute a migração atualizada do Supabase sempre que essa política mudar.
 
 ## Segurança
 
@@ -77,7 +82,7 @@ O dashboard cria documentos em `files` no Firestore e envia os bytes ao bucket p
 - Mantenha o Google Cloud / Firebase no plano gratuito sem habilitar billing para recursos não planejados.
 - A chave Gemini BYOK deve ficar somente no `localStorage` do usuário.
 - Firestore Rules e políticas RLS devem ser testadas no Firebase Emulator Suite e no Supabase antes do lançamento.
-- Os PDFs e documentos exigem renderizadores dedicados ainda não incluídos em todas as telas; não habilite `<iframe>` não autenticado para arquivos privados.
+- Arquivos privados devem ser abertos pelo leitor autenticado com URL assinada de curta duração; não exponha o bucket nem use `<iframe>` sem autenticação.
 
 ## Deploy gratuito
 
